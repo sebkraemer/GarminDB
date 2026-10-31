@@ -7,19 +7,6 @@ export VENV=$(PROJECT_BASE)/.venv
 
 include defines.mk
 
-$(info $$PROJECT_BASE is [${PROJECT_BASE}])
-$(info $$VENV is [${VENV}])
-$(info $$PLATFORM is [${PLATFORM}])
-$(info $$SHELL is [${SHELL}])
-
-export PIP_PATH=$(VENV)/bin/$(PIP)
-$(info $$PIP_PATH is [${PIP_PATH}])
-export PYTHON_PATH=$(VENV)/bin/$(PYTHON)
-$(info $$PYTHON_PATH is [${PYTHON_PATH}])
-export GARMINDB_CLI=$(VENV)/bin/garmindb_cli.py
-$(info $$GARMINDB_CLI is [${GARMINDB_CLI}])
-
-
 #
 # Master targets
 #
@@ -56,7 +43,7 @@ update_copy_dbs: copy_garmin_latest
 #
 # Project maintainance targets
 #
-SUBMODULES=Fit Tcx utilities
+SUBMODULES=Fit Tcx utilities Jupyter
 SUBDIRS=fitbitdb garmindb healthdb mshealthdb
 
 $(CONF_DIR):
@@ -153,12 +140,6 @@ requirements.txt:
 dev-requirements.txt:
 	$(PIP_PATH) freeze -r dev-requirements.in > dev-requirements.txt
 
-Jupyter/requirements.txt:
-	$(PIP_PATH) freeze -r Jupyter/requirements.in > Jupyter/requirements.txt
-
-Jupyter/requirements_graphs.txt:
-	$(PIP_PATH) freeze -r Jupyter/requirements_graphs.in > Jupyter/requirements_graphs.txt
-
 update_pip_packages:
 	$(PIP_PATH) list --outdated | egrep -v "Package|---" | cut -d' ' -f1 | xargs pip install --upgrade
 
@@ -171,13 +152,7 @@ $(SUBMODULES:%=%-devdeps):
 devdeps: $(SUBMODULES:%=%-devdeps)
 	$(PIP_PATH) install --upgrade --requirement dev-requirements.txt
 
-graphdeps:
-	$(PIP_PATH) install --upgrade --requirement Jupyter/requirements_graphs.txt
-
-jupiterdeps: graphdeps
-	$(PIP_PATH) install --upgrade --requirement Jupyter/requirements.txt
-
-alldeps: update_pip_packages deps devdeps jupiterdeps
+alldeps: update_pip_packages deps devdeps
 
 $(SUBMODULES:%=%-remove_deps):
 	$(MAKE) -C $(subst -remove_deps,,$@) remove_deps
@@ -185,8 +160,6 @@ $(SUBMODULES:%=%-remove_deps):
 remove_deps: $(SUBMODULES:%=%-remove_deps)
 	$(PIP_PATH) uninstall -y --requirement requirements.txt
 	$(PIP_PATH) uninstall -y --requirement dev-requirements.txt
-	$(PIP_PATH) uninstall -y --requirement Jupyter/requirements.txt
-	$(PIP_PATH) uninstall -y --requirement Jupyter/requirements_graphs.txt
 
 clean_deps: remove_deps
 
@@ -202,13 +175,11 @@ clean: $(SUBMODULES:%=%-clean) $(SUBDIRS:%=%-clean) test_clean build_clean
 	rm -f *.pyc
 	rm -f *.log
 	rm -f scripts/*.log
-	rm -f Jupyter/*.log
 	rm -f *.spec
 	rm -f *.zip
 	rm -f *.png
 	rm -f *stats.txt
 	rm -f scripts/*stats.txt
-	rm -f Jupyter/*stats.txt
 	rm -rf __pycache__
 
 realclean: clean clean_venv
@@ -251,8 +222,20 @@ build_garmin_monitoring:
 import_garmin_monitoring:
 	$(GARMINDB_CLI) --monitoring --import --latest
 
-build_garmin_activities:
-	$(GARMINDB_CLI) --activities --import --analyze
+import_garmin_monitoring:
+	$(GARMINDB_CLI) --monitoring --import --latest
+
+import_garmin_sleep:
+	$(GARMINDB_CLI) --sleep --import
+
+build_garmin_sleep:
+	$(GARMINDB_CLI) --sleep --import --analyze
+
+build_garmin_hrv:
+	$(GARMINDB_CLI) --hrv --import --analyze
+
+build_garmin_lifestyle:
+	$(GARMINDB_CLI) --lifestyle --download --import
 
 copy_garmin_settings:
 	$(GARMINDB_CLI) --copy
@@ -262,6 +245,12 @@ copy_garmin:
 
 update_garmin:
 	$(GARMINDB_CLI) --all --download --import --analyze --latest
+
+import_garmin_activities:
+	$(GARMINDB_CLI) --activities --import
+
+download_garmin_activities:
+	$(GARMINDB_CLI) --activities --download --import --analyze
 
 update_garmin_activities:
 	$(GARMINDB_CLI) --activities --download --import --analyze --latest

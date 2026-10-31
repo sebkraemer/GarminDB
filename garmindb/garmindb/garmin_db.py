@@ -26,7 +26,7 @@ class GarminDbError_IdNotFound(GarminDbError):
     """File id not found"""
 
 
-GarminDb = idbutils.DB.create('garmin', 14, "Database for storing health data from a Garmin device.")
+GarminDb = idbutils.DB.create('garmin', 15, "Database for storing health data from a Garmin device.")
 
 
 class Attributes(GarminDb.Base, idbutils.KeyValueObject):
@@ -40,24 +40,25 @@ class Attributes(GarminDb.Base, idbutils.KeyValueObject):
     @classmethod
     def measurements_type(cls, db, default=None):
         """Return the database units type (metric, statute, etc)."""
-        return fitfile.field_enums.DisplayMeasure.from_string(cls.get_string(db, 'measurement_system', default))
+        return fitfile.MeasurementSystem.from_string(cls.get_string(db, 'measurement_system', default))
 
     @classmethod
     def measurements_type_metric(cls, db):
         """Return True if the database units are metric."""
-        return (cls.measurements_type(db) == fitfile.field_enums.DisplayMeasure.metric)
+        return (cls.measurements_type(db) == fitfile.MeasurementSystem.metric)
 
 
 class Device(GarminDb.Base, idbutils.DbObject):
     """Class representing a Garmin device."""
 
     __tablename__ = 'devices'
+    __time_col_name__ = 'timestamp'
 
     db = GarminDb
     table_version = 5
     unknown_device_serial_number = 9999999999
 
-    Manufacturer = idbutils.derived_enum.derive('Manufacturer', fitfile.Manufacturer, {'Microsoft' : 100001, 'Unknown': 100000})
+    Manufacturer = idbutils.derived_enum.derive('Manufacturer', fitfile.fields.Manufacturer, {'Microsoft' : 100001, 'Unknown': 100000})
 
     serial_number = Column(BigInteger, primary_key=True)
     timestamp = Column(DateTime)
@@ -69,7 +70,7 @@ class Device(GarminDb.Base, idbutils.DbObject):
     @property
     def product_as_enum(self):
         """Convert the product attribute from a string to an enum and return it."""
-        return fitfile.product_enum(self.manufacturer, self.product)
+        return fitfile.fields.product_enum(self.manufacturer, self.product)
 
     @classmethod
     def local_device_serial_number(cls, serial_number, device_type):
@@ -83,6 +84,7 @@ class DeviceInfo(GarminDb.Base, idbutils.DbObject):
     """Class representing a Garmin device info message from a FIT file."""
 
     __tablename__ = 'device_info'
+    __time_col_name__ = 'timestamp'
 
     db = GarminDb
     table_version = 5
@@ -93,7 +95,7 @@ class DeviceInfo(GarminDb.Base, idbutils.DbObject):
     serial_number = Column(BigInteger, ForeignKey('devices.serial_number'), nullable=False)
     software_version = Column(String)
     cum_operating_time = Column(Time, nullable=False, default=datetime.time.min)
-    battery_status = Column(Enum(fitfile.field_enums.BatteryStatus))
+    battery_status = Column(Enum(fitfile.fields.BatteryStatus))
     battery_voltage = Column(Float)
 
     __table_args__ = (
@@ -119,7 +121,7 @@ class DeviceInfo(GarminDb.Base, idbutils.DbObject):
             Device.hardware_version.label('hardware_version'),
             cls.battery_status.label('battery_status')
         ]
-        cls.create_join_view(db, cls._get_default_view_name(), cols, Device, order_by=cls.timestamp.desc())
+        cls.create_join_view(db, cls._get_default_view_name(), cols, [Device], order_by=cls.timestamp.desc())
 
 
 class File(GarminDb.Base, idbutils.DbObject):
@@ -185,6 +187,7 @@ class Weight(GarminDb.Base, idbutils.DbObject):
     """Class representing a weight entry."""
 
     __tablename__ = 'weight'
+    __time_col_name__ = 'day'
 
     db = GarminDb
     table_version = 2
@@ -196,9 +199,9 @@ class Weight(GarminDb.Base, idbutils.DbObject):
     def get_stats(cls, session, start_ts, end_ts):
         """Return a dictionary of aggregate statistics for the given time period."""
         return {
-            'weight_avg': cls.s_get_col_avg(session, cls.weight, start_ts, end_ts, True),
-            'weight_min': cls.s_get_col_min(session, cls.weight, start_ts, end_ts, True),
-            'weight_max': cls.s_get_col_max(session, cls.weight, start_ts, end_ts)
+            'weight_avg': cls.s_get_col_avg(session, cls.weight, start_ts, end_ts, True, 1),
+            'weight_min': cls.s_get_col_min(session, cls.weight, start_ts, end_ts, True, 1),
+            'weight_max': cls.s_get_col_max(session, cls.weight, start_ts, end_ts, precision=1)
         }
 
 
@@ -206,6 +209,7 @@ class Stress(GarminDb.Base, idbutils.DbObject):
     """Class representing a stress reading."""
 
     __tablename__ = 'stress'
+    __time_col_name__ = 'timestamp'
 
     db = GarminDb
     table_version = 1
@@ -217,91 +221,7 @@ class Stress(GarminDb.Base, idbutils.DbObject):
     def get_stats(cls, session, start_ts, end_ts):
         """Return a dictionary of aggregate statistics for the given time period."""
         return {
-            'stress_avg': cls.s_get_col_avg(session, cls.stress, start_ts, end_ts, True),
-        }
-
-
-class Sleep(GarminDb.Base, idbutils.DbObject):
-    """Class representing a sleep session."""
-
-    __tablename__ = 'sleep'
-
-    db = GarminDb
-    table_version = 4
-
-    day = Column(DateTime, primary_key=True)
-    start = Column(DateTime)
-    end = Column(DateTime)
-    total_sleep = Column(Time, nullable=False, default=datetime.time.min)
-    deep_sleep = Column(Time, nullable=False, default=datetime.time.min)
-    light_sleep = Column(Time, nullable=False, default=datetime.time.min)
-    rem_sleep = Column(Time, nullable=False, default=datetime.time.min)
-    awake = Column(Time, nullable=False, default=datetime.time.min)
-    avg_spo2 = Column(Float)
-    avg_rr = Column(Float)
-    avg_stress = Column(Float)
-    score = Column(Integer)
-    qualifier = Column(String)
-
-    @classmethod
-    def get_stats(cls, session, start_ts, end_ts):
-        """Return a dictionary of aggregate statistics for the given time period."""
-        return {
-            'sleep_avg'     : cls.s_get_time_col_avg(session, cls.total_sleep, start_ts, end_ts),
-            'sleep_min'     : cls.s_get_time_col_min(session, cls.total_sleep, start_ts, end_ts),
-            'sleep_max'     : cls.s_get_time_col_max(session, cls.total_sleep, start_ts, end_ts),
-            'rem_sleep_avg' : cls.s_get_time_col_avg(session, cls.rem_sleep, start_ts, end_ts),
-            'rem_sleep_min' : cls.s_get_time_col_min(session, cls.rem_sleep, start_ts, end_ts),
-            'rem_sleep_max' : cls.s_get_time_col_max(session, cls.rem_sleep, start_ts, end_ts),
-        }
-
-
-class SleepEvents(GarminDb.Base, idbutils.DbObject):
-    """Table that stores events recorded during sleep."""
-
-    __tablename__ = 'sleep_events'
-
-    db = GarminDb
-    table_version = 2
-
-    timestamp = Column(DateTime, primary_key=True)
-    event = Column(String)
-    duration = Column(Time, nullable=False, default=datetime.time.min)
-
-    @classmethod
-    def get_wake_time(cls, db, day_date):
-        """Return the wake time for a given date."""
-        day_start_ts = datetime.datetime.combine(day_date, datetime.time.min)
-        day_stop_ts = datetime.datetime.combine(day_date, datetime.time.max)
-        values = cls.get_col_values(db, cls.timestamp, cls.event, 'wake_time', day_start_ts, day_stop_ts)
-        if len(values) > 0:
-            return values[0][0]
-
-    @classmethod
-    def get_level_time(cls, session, day_date, sleep_level):
-        """Return the time in a given sleep level for a given date."""
-        day_start_ts = datetime.datetime.combine(day_date, datetime.time.min)
-        day_stop_ts = datetime.datetime.combine(day_date, datetime.time.max)
-        result = cls._s_query(session, cls._time_from_secs(func.sum(cls._secs_from_time(cls.duration))), None, day_start_ts, day_stop_ts,
-                              cls._secs_from_time(cls.duration)).filter(cls.event == sleep_level).scalar()
-        return result if result is not None else datetime.time.min
-
-    @classmethod
-    def get_day_stats(cls, session, day_date):
-        """Return a dictionary of aggregate statistics for the given time period."""
-        deep_sleep = cls.get_level_time(session, day_date, 'deep_sleep')
-        light_sleep = cls.get_level_time(session, day_date, 'light_sleep')
-        rem_sleep = cls.get_level_time(session, day_date, 'rem_sleep')
-        awake = cls.get_level_time(session, day_date, 'awake')
-        total_sleep = fitfile.conversions.add_time(
-            fitfile.conversions.add_time(deep_sleep, light_sleep), rem_sleep
-        )
-        return {
-            'total_sleep': total_sleep,
-            'deep_sleep': deep_sleep,
-            'light_sleep': light_sleep,
-            'rem_sleep': rem_sleep,
-            'awake': awake
+            'stress_avg': cls.s_get_col_avg(session, cls.stress, start_ts, end_ts, True, 1),
         }
 
 
@@ -309,6 +229,7 @@ class RestingHeartRate(GarminDb.Base, idbutils.DbObject):
     """Class representing a daily resting heart rate reading."""
 
     __tablename__ = 'resting_hr'
+    __time_col_name__ = 'day'
 
     db = GarminDb
     table_version = 2
@@ -321,48 +242,47 @@ class RestingHeartRate(GarminDb.Base, idbutils.DbObject):
     def get_stats(cls, session, start_ts, end_ts):
         """Return a dictionary of aggregate statistics for the given time period."""
         return {
-            'rhr_avg': cls.s_get_col_avg(session, cls.resting_heart_rate, start_ts, end_ts, ignore_le_zero=True),
-            'rhr_min': cls.s_get_col_min(session, cls.resting_heart_rate, start_ts, end_ts, ignore_le_zero=True),
-            'rhr_max': cls.s_get_col_max(session, cls.resting_heart_rate, start_ts, end_ts),
+            'rhr_avg': cls.s_get_col_avg(session, cls.resting_heart_rate, start_ts, end_ts, ignore_le_zero=True, precision=1),
+            'rhr_min': cls.s_get_col_min(session, cls.resting_heart_rate, start_ts, end_ts, ignore_le_zero=True, precision=1),
+            'rhr_max': cls.s_get_col_max(session, cls.resting_heart_rate, start_ts, end_ts, precision=1),
         }
 
 
-class Hrv(GarminDb.Base, idbutils.DbObject):
-    """Class representing daily Heart Rate Variability (HRV) data."""
+class LifestyleLogging(GarminDb.Base, idbutils.DbObject):
+    """Class representing a daily lifestyle logging data."""
 
-    __tablename__ = 'hrv'
+    __tablename__ = 'lifestyle_logging'
+    __time_col_name__ = 'day'
 
     db = GarminDb
-    table_version = 1
-    _col_units = {
-        'weekly_avg': 'ms',
-        'last_night_avg': 'ms',
-        'last_night_5min_high': 'ms',
-        'baseline_low': 'ms',
-        'baseline_upper': 'ms'
-    }
+    table_version = 2
 
-    day = Column(DateTime, primary_key=True)
-    weekly_avg = Column(Integer)
-    last_night_avg = Column(Integer)
-    last_night_5min_high = Column(Integer)
-    baseline_low = Column(Integer)
-    baseline_upper = Column(Integer)
-    status = Column(String)
+    day = Column(DateTime)
+    name = Column(String)
+    subtype_name = Column(String)
+    amount = Column(Integer)
+
+    __table_args__ = (PrimaryKeyConstraint("day", "name", "subtype_name"),)
 
     @classmethod
-    def get_stats(cls, session, start_ts, end_ts):
-        """Return a dictionary of aggregate statistics for the given time period."""
-        return {
-            'hrv_weekly_avg': cls.s_get_col_avg(session, cls.weekly_avg, start_ts, end_ts, ignore_le_zero=True),
-            'hrv_last_night_avg': cls.s_get_col_avg(session, cls.last_night_avg, start_ts, end_ts, ignore_le_zero=True),
-        }
+    def s_get(cls, session, day, name, subtype_name='', default=None):
+        """Return a single instance for the given cols."""
+        instance = session.query(cls).filter(cls.day == day).filter(cls.name == name).filter(cls.subtype_name == subtype_name).scalar()
+        if instance is None:
+            return default
+        return instance
+
+    @classmethod
+    def s_get_from_dict(cls, session, values_dict):
+        """Return a single lifestyle logging instance for the given cols."""
+        return cls.s_get(session, values_dict['day'], values_dict['name'], values_dict['subtype_name'] if values_dict.get('subtype_name') else '')
 
 
 class DailySummary(GarminDb.Base, idbutils.DbObject):
     """Class representing a Garmin daily summary."""
 
     __tablename__ = 'daily_summary'
+    __time_col_name__ = 'day'
 
     db = GarminDb
     table_version = 5
@@ -450,35 +370,35 @@ class DailySummary(GarminDb.Base, idbutils.DbObject):
     def get_stats(cls, session, start_ts, end_ts):
         """Return a dictionary of aggregate statistics for the given time period."""
         return {
-            'rhr_avg'                   : cls.s_get_col_avg(session, cls.rhr, start_ts, end_ts),
-            'rhr_min'                   : cls.s_get_col_min(session, cls.rhr, start_ts, end_ts),
-            'rhr_max'                   : cls.s_get_col_max(session, cls.rhr, start_ts, end_ts),
-            'stress_avg'                : cls.s_get_col_avg(session, cls.stress_avg, start_ts, end_ts),
+            'rhr_avg'                   : cls.s_get_col_avg(session, cls.rhr, start_ts, end_ts, precision=1),
+            'rhr_min'                   : cls.s_get_col_min(session, cls.rhr, start_ts, end_ts, precision=1),
+            'rhr_max'                   : cls.s_get_col_max(session, cls.rhr, start_ts, end_ts, precision=1),
+            'stress_avg'                : cls.s_get_col_avg(session, cls.stress_avg, start_ts, end_ts, precision=1),
             'steps'                     : cls.s_get_col_sum(session, cls.steps, start_ts, end_ts),
             'steps_goal'                : cls.s_get_col_sum(session, cls.step_goal, start_ts, end_ts),
-            'floors'                    : cls.s_get_col_sum(session, cls.floors_up, start_ts, end_ts),
+            'floors'                    : cls.s_get_col_sum(session, cls.floors_up, start_ts, end_ts, precision=0),
             'floors_goal'               : cls.s_get_col_sum(session, cls.floors_goal, start_ts, end_ts),
             'intensity_time'            : cls.s_get_time_col_avg(session, cls.intensity_time, start_ts, end_ts),
             'moderate_activity_time'    : cls.s_get_time_col_avg(session, cls.moderate_activity_time, start_ts, end_ts),
             'vigorous_activity_time'    : cls.s_get_time_col_sum(session, cls.vigorous_activity_time, start_ts, end_ts),
             'intensity_time_goal'       : cls.s_get_time_col_avg(session, cls.intensity_time_goal, start_ts, end_ts),
-            'calories_goal'             : cls.s_get_col_sum(session, cls.calories_goal, start_ts, end_ts),
-            'calories_avg'              : cls.s_get_col_avg(session, cls.calories_total, start_ts, end_ts),
-            'calories_bmr_avg'          : cls.s_get_col_avg(session, cls.calories_bmr, start_ts, end_ts),
-            'calories_active_avg'       : cls.s_get_col_avg(session, cls.calories_active, start_ts, end_ts),
-            'calories_consumed_avg'     : cls.s_get_col_avg(session, cls.calories_consumed, start_ts, end_ts),
-            'hydration_goal'            : cls.s_get_col_sum(session, cls.hydration_goal, start_ts, end_ts),
-            'hydration_avg'             : cls.s_get_col_avg(session, cls.hydration_intake, start_ts, end_ts),
-            'hydration_intake'          : cls.s_get_col_sum(session, cls.hydration_intake, start_ts, end_ts),
-            'sweat_loss_avg'            : cls.s_get_col_avg(session, cls.sweat_loss, start_ts, end_ts),
-            'sweat_loss'                : cls.s_get_col_sum(session, cls.sweat_loss, start_ts, end_ts),
-            'spo2_avg'                  : cls.s_get_col_avg(session, cls.spo2_avg, start_ts, end_ts),
-            'spo2_min'                  : cls.s_get_col_min(session, cls.spo2_min, start_ts, end_ts),
-            'rr_waking_avg'             : cls.s_get_col_avg(session, cls.rr_waking_avg, start_ts, end_ts),
-            'rr_max'                    : cls.s_get_col_max(session, cls.rr_max, start_ts, end_ts),
-            'rr_min'                    : cls.s_get_col_min(session, cls.rr_min, start_ts, end_ts),
-            'bb_max'                    : cls.s_get_col_avg(session, cls.bb_max, start_ts, end_ts),
-            'bb_min'                    : cls.s_get_col_avg(session, cls.bb_min, start_ts, end_ts),
+            'calories_goal'             : cls.s_get_col_sum(session, cls.calories_goal, start_ts, end_ts, precision=0),
+            'calories_avg'              : cls.s_get_col_avg(session, cls.calories_total, start_ts, end_ts, precision=0),
+            'calories_bmr_avg'          : cls.s_get_col_avg(session, cls.calories_bmr, start_ts, end_ts, precision=0),
+            'calories_active_avg'       : cls.s_get_col_avg(session, cls.calories_active, start_ts, end_ts, precision=0),
+            'calories_consumed_avg'     : cls.s_get_col_avg(session, cls.calories_consumed, start_ts, end_ts, precision=0),
+            'hydration_goal'            : cls.s_get_col_sum(session, cls.hydration_goal, start_ts, end_ts, precision=0),
+            'hydration_avg'             : cls.s_get_col_avg(session, cls.hydration_intake, start_ts, end_ts, precision=0),
+            'hydration_intake'          : cls.s_get_col_sum(session, cls.hydration_intake, start_ts, end_ts, precision=0),
+            'sweat_loss_avg'            : cls.s_get_col_avg(session, cls.sweat_loss, start_ts, end_ts, precision=0),
+            'sweat_loss'                : cls.s_get_col_sum(session, cls.sweat_loss, start_ts, end_ts, precision=0),
+            'spo2_avg'                  : cls.s_get_col_avg(session, cls.spo2_avg, start_ts, end_ts, precision=1),
+            'spo2_min'                  : cls.s_get_col_min(session, cls.spo2_min, start_ts, end_ts, precision=1),
+            'rr_waking_avg'             : cls.s_get_col_avg(session, cls.rr_waking_avg, start_ts, end_ts, precision=0),
+            'rr_max'                    : cls.s_get_col_max(session, cls.rr_max, start_ts, end_ts, precision=0),
+            'rr_min'                    : cls.s_get_col_min(session, cls.rr_min, start_ts, end_ts, precision=0),
+            'bb_max'                    : cls.s_get_col_avg(session, cls.bb_max, start_ts, end_ts, precision=0),
+            'bb_min'                    : cls.s_get_col_avg(session, cls.bb_min, start_ts, end_ts, precision=0),
         }
 
     @classmethod

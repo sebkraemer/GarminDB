@@ -20,35 +20,149 @@ logger = logging.getLogger(__name__)
 ActivitiesDb = idbutils.DB.create('garmin_activities', 13, "Database for storing activities data.")
 
 
-class ActivitiesCommon(idbutils.DbObject):
-    """Database object mixin for storing data common to activities and laps."""
+class Attributes(ActivitiesDb.Base, idbutils.KeyValueObject):
+    """Object representing generic key-value data from a Garmin device."""
 
-    start_time = Column(DateTime)
-    stop_time = Column(DateTime)
+    __tablename__ = 'attributes'
+
+    db = ActivitiesDb
+    table_version = 1
+
+    @classmethod
+    def measurements_type(cls, db, default=None):
+        """Return the database units type (metric, statute, etc)."""
+        return fitfile.MeasurementSystem.from_string(cls.get_string(db, 'measurement_system', default))
+
+    @classmethod
+    def measurements_type_metric(cls, db):
+        """Return True if the database units are metric."""
+        return (cls.measurements_type(db) == fitfile.MeasurementSystem.metric)
+
+
+class ActivitiesLengthsCommon(idbutils.DbObject):
+    """Database object mixin for storing data common to activities, splits, lengths, and laps."""
+
     elapsed_time = Column(Time, nullable=False, default=datetime.time.min)
     moving_time = Column(Time, nullable=False, default=datetime.time.min)
-    # kms or miles
-    distance = Column(Float)
-    cycles = Column(Float)
+    avg_speed = Column(Float)
+    max_speed = Column(Float)
+    calories = Column(Integer)
     # beats per minute
     avg_hr = Column(Integer)
     max_hr = Column(Integer)
+
+
+class ActivityLengths(ActivitiesDb.Base, ActivitiesLengthsCommon):
+    """Pool length from an activity."""
+
+    __tablename__ = 'activity_lengths'
+
+    db = ActivitiesDb
+    table_version = 1
+
+    activity_id = Column(String, ForeignKey('activities.activity_id'))
+    length_num = Column(Integer)
+    event_type = Column(Enum(fitfile.fields.EventType))
+    strokes = Column(Float)
+    swim_stroke = Column(Enum(fitfile.fields.SwimStroke))
+    cadence = Column(Integer)
+    length_type = Column(Enum(fitfile.fields.LengthType))
     # breaths per minute
     avg_rr = Column(Float)
     max_rr = Column(Float)
-    calories = Column(Integer)
-    avg_cadence = Column(Integer)
-    max_cadence = Column(Integer)
-    # kmph or mph
-    avg_speed = Column(Float)
+
+    __table_args__ = (PrimaryKeyConstraint("activity_id", "length_num"),)
+
+    @classmethod
+    def s_get(cls, session, activity_id, length_number, default=None):
+        """Return a single instance for the given id."""
+        instance = session.query(cls).filter(cls.activity_id == activity_id).filter(cls.length_num == length_number).scalar()
+        if instance is None:
+            return default
+        return instance
+
+    @classmethod
+    def s_get_from_dict(cls, session, values_dict):
+        """Return a single activity instance for the given id."""
+        return cls.s_get(session, values_dict['activity_id'], values_dict['length_num'])
+
+    @classmethod
+    def s_get_activity(cls, session, activity_id):
+        """Return all records for a given activity_id."""
+        return session.query(cls).filter(cls.activity_id == activity_id).all()
+
+    @classmethod
+    def get_activity(cls, db, activity_id):
+        """Return all records for a given activity_id."""
+        with db.managed_session() as session:
+            return cls.s_get_activity(session, activity_id)
+
+
+class ActivitiesSplitSummariessCommon(ActivitiesLengthsCommon):
+    """Database object mixin for storing data common to activities, splits and laps."""
+
+    # kms or miles
+    distance = Column(Float)
+
     max_speed = Column(Float)
     # feet or meters
     ascent = Column(Float)
     descent = Column(Float)
+
+    avg_cadence = Column(Integer)
+    max_cadence = Column(Integer)
+
     # C or F
-    max_temperature = Column(Float)
     min_temperature = Column(Float)
     avg_temperature = Column(Float)
+
+
+class ActivitySplitSummaries(ActivitiesDb.Base, ActivitiesSplitSummariessCommon):
+    """Class that holds data for an activity split summary."""
+
+    __tablename__ = 'activity_split_summaries'
+
+    db = ActivitiesDb
+    table_version = 1
+
+    activity_id = Column(String, ForeignKey('activities.activity_id'))
+    split_summary = Column(Integer)
+    num_splits = Column(Integer)
+
+    __table_args__ = (PrimaryKeyConstraint("activity_id", "split_summary"),)
+
+    @classmethod
+    def s_get(cls, session, activity_id, split_summary_number, default=None):
+        """Return a single instance for the given id."""
+        instance = session.query(cls).filter(cls.activity_id == activity_id).filter(cls.split_summary == split_summary_number).scalar()
+        if instance is None:
+            return default
+        return instance
+
+    @classmethod
+    def s_get_from_dict(cls, session, values_dict):
+        """Return a single instance for the given activity id."""
+        return cls.s_get(session, values_dict['activity_id'], values_dict['split_summary'])
+
+    @classmethod
+    def s_get_activity(cls, session, activity_id):
+        """Return all split summaries for a given activity_id."""
+        return session.query(cls).filter(cls.activity_id == activity_id).all()
+
+    @classmethod
+    def get_activity(cls, db, activity_id):
+        """Return all split summaries for a given activity_id."""
+        with db.managed_session() as session:
+            return cls.s_get_activity(session, activity_id)
+
+
+class ActivitiesSplitsCommon(ActivitiesSplitSummariessCommon):
+    """Database object mixin for storing data common to activities, splits and laps."""
+
+    __time_col_name__ = "start_time"
+
+    start_time = Column(DateTime)
+    stop_time = Column(DateTime)
 
     # degrees
     start_lat = Column(Float)
@@ -56,20 +170,11 @@ class ActivitiesCommon(idbutils.DbObject):
     stop_lat = Column(Float)
     stop_long = Column(Float)
 
-    # heart rate zone data
-    hr_zones_method = Column(Enum(fitfile.enum_fields.HeartRateZonesMethod))
-    # heart rate threashold that the zone starts at
-    hrz_1_hr = Column(Integer)
-    hrz_2_hr = Column(Integer)
-    hrz_3_hr = Column(Integer)
-    hrz_4_hr = Column(Integer)
-    hrz_5_hr = Column(Integer)
-    # amount of time in that zone
-    hrz_1_time = Column(Time, nullable=False, default=datetime.time.min)
-    hrz_2_time = Column(Time, nullable=False, default=datetime.time.min)
-    hrz_3_time = Column(Time, nullable=False, default=datetime.time.min)
-    hrz_4_time = Column(Time, nullable=False, default=datetime.time.min)
-    hrz_5_time = Column(Time, nullable=False, default=datetime.time.min)
+    avg_power = Column(Integer)
+    max_power = Column(Integer)
+    normalized_power = Column(Integer)
+
+    max_temperature = Column(Float)
 
     @hybrid_property
     def start_loc(self):
@@ -92,7 +197,115 @@ class ActivitiesCommon(idbutils.DbObject):
         self.stop_long = stop_location.long_deg
 
 
-class Activities(ActivitiesDb.Base, ActivitiesCommon):
+class ActivitySplits(ActivitiesDb.Base, ActivitiesSplitsCommon):
+    """Class that holds data for an activity split."""
+
+    __tablename__ = 'activity_splits'
+
+    db = ActivitiesDb
+    table_version = 1
+
+    activity_id = Column(String, ForeignKey('activities.activity_id'))
+    split = Column(Integer)
+
+    __table_args__ = (PrimaryKeyConstraint("activity_id", "split"),)
+
+    @classmethod
+    def s_get(cls, session, activity_id, split_number, default=None):
+        """Return a single instance for the given id."""
+        instance = session.query(cls).filter(cls.activity_id == activity_id).filter(cls.split == split_number).scalar()
+        if instance is None:
+            return default
+        return instance
+
+    @classmethod
+    def s_get_from_dict(cls, session, values_dict):
+        """Return a single activity instance for the given id."""
+        return cls.s_get(session, values_dict['activity_id'], values_dict['split'])
+
+    @classmethod
+    def s_get_activity(cls, session, activity_id):
+        """Return all splits for a given activity_id."""
+        return session.query(cls).filter(cls.activity_id == activity_id).all()
+
+    @classmethod
+    def get_activity(cls, db, activity_id):
+        """Return all splits for a given activity_id."""
+        with db.managed_session() as session:
+            return cls.s_get_activity(session, activity_id)
+
+
+class ActivityClimbingSplits(ActivitiesDb.Base, idbutils.DbObject):
+    """Class that holds data for an activity climbing split."""
+
+    __tablename__ = 'activity_climbing_splits'
+
+    db = ActivitiesDb
+    table_version = 1
+
+    activity_id = Column(String, ForeignKey('activities.activity_id'))
+    split = Column(Integer)
+    grade = Column(String)          # climbing grade
+    completed = Column(Boolean)     # climbing route
+    falls = Column(Integer)         # climbing number of falls
+
+    __table_args__ = (PrimaryKeyConstraint("activity_id", "split"),)
+
+    @classmethod
+    def s_get(cls, session, activity_id, split_number, default=None):
+        """Return a single instance for the given id."""
+        instance = session.query(cls).filter(cls.activity_id == activity_id).filter(cls.split == split_number).scalar()
+        if instance is None:
+            return default
+        return instance
+
+    @classmethod
+    def s_get_from_dict(cls, session, values_dict):
+        """Return a single activity instance for the given id."""
+        return cls.s_get(session, values_dict['activity_id'], values_dict['split'])
+
+    @classmethod
+    def s_get_activity(cls, session, activity_id):
+        """Return all splits for a given activity_id."""
+        return session.query(cls).filter(cls.activity_id == activity_id).all()
+
+    @classmethod
+    def get_activity(cls, db, activity_id):
+        """Return all splits for a given activity_id."""
+        with db.managed_session() as session:
+            return cls.s_get_activity(session, activity_id)
+
+
+class ActivitiesLapsCommon(ActivitiesSplitsCommon):
+    """Database object mixin for storing data common to activities and laps."""
+
+    moving_time = Column(Time, nullable=False, default=datetime.time.min)
+    cycles = Column(Float)
+
+    # ml
+    est_sweat_loss = Column(Integer)
+
+    # breaths per minute
+    avg_rr = Column(Float)
+    max_rr = Column(Float)
+
+    # heart rate zone data
+    hr_calc_type = Column(Enum(fitfile.fields.HeartRateZoneCalc))
+    # heart rate threashold that the zone starts at
+    hrz_1_hr = Column(Integer)
+    hrz_2_hr = Column(Integer)
+    hrz_3_hr = Column(Integer)
+    hrz_4_hr = Column(Integer)
+    hrz_5_hr = Column(Integer)
+    # amount of time in that zone
+    hrz_1_time = Column(Time, nullable=False, default=datetime.time.min)
+    hrz_2_time = Column(Time, nullable=False, default=datetime.time.min)
+    hrz_3_time = Column(Time, nullable=False, default=datetime.time.min)
+    hrz_4_time = Column(Time, nullable=False, default=datetime.time.min)
+    hrz_5_time = Column(Time, nullable=False, default=datetime.time.min)
+
+
+class Activities(ActivitiesDb.Base, ActivitiesLapsCommon):
     """Class represents a database table that contains data about recorded activities."""
 
     __tablename__ = 'activities'
@@ -104,42 +317,17 @@ class Activities(ActivitiesDb.Base, ActivitiesCommon):
     name = Column(String)
     description = Column(String)
     type = Column(String)
-    course_id = Column(Integer)
     laps = Column(Integer)
     sport = Column(String)
     sub_sport = Column(String)
-
-    device_serial_number = Column(BigInteger)
-
-    self_eval_feel = Column(String)
-    self_eval_effort = Column(String)
-
     training_load = Column(Float)
-
     training_effect = Column(Float)
     anaerobic_training_effect = Column(Float)
+    primary_benefit = Column(Enum(fitfile.fields.Benefit))
 
     def is_steps_activity(self):
         """Return if the activity is a steps based activity."""
         return self.sport in ['walking', 'running', 'hiking']
-
-    @classmethod
-    def get_by_course_id(cls, db, course_id):
-        """Return all activities items for activities with the matching course_id."""
-        with db.managed_session() as session:
-            return session.query(cls).filter(cls.course_id == course_id).order_by(cls.start_time).all()
-
-    @classmethod
-    def get_fastest_by_course_id(cls, db, course_id):
-        """Return an activities items for the activity with the matching course_id with the fastest speed."""
-        with db.managed_session() as session:
-            return session.query(cls).filter(cls.course_id == course_id).order_by(desc(cls.avg_speed)).limit(1).one_or_none()
-
-    @classmethod
-    def get_slowest_by_course_id(cls, db, course_id):
-        """Return an activities items for the activity with the matching course_id with the slowest speed."""
-        with db.managed_session() as session:
-            return session.query(cls).filter(cls.course_id == course_id).order_by(cls.avg_speed).limit(1).one_or_none()
 
     @classmethod
     def get_by_sport(cls, db, sport):
@@ -182,7 +370,7 @@ class Activities(ActivitiesDb.Base, ActivitiesCommon):
         return stats
 
 
-class ActivityLaps(ActivitiesDb.Base, ActivitiesCommon):
+class ActivityLaps(ActivitiesDb.Base, ActivitiesLapsCommon):
     """Class that holds data for an activity lap."""
 
     __tablename__ = 'activity_laps'
@@ -228,47 +416,6 @@ class ActivityLaps(ActivitiesDb.Base, ActivitiesCommon):
     def start_loc(self, start_location):
         self.start_lat = start_location.lat_deg
         self.start_long = start_location.long_deg
-
-
-class ActivitySplits(ActivitiesDb.Base, ActivitiesCommon):
-    """Class that holds data for an activity split."""
-
-    __tablename__ = 'activity_splits'
-
-    db = ActivitiesDb
-    table_version = 1
-
-    activity_id = Column(String, ForeignKey('activities.activity_id'))
-    split = Column(Integer)
-    grade = Column(String)  # climbing grade
-    completed = Column(Boolean)  # climbing route
-    falls = Column(Integer)  # climbing number of falls
-
-    __table_args__ = (PrimaryKeyConstraint("activity_id", "split"),)
-
-    @classmethod
-    def s_get(cls, session, activity_id, split_number, default=None):
-        """Return a single instance for the given id."""
-        instance = session.query(cls).filter(cls.activity_id == activity_id).filter(cls.split == split_number).scalar()
-        if instance is None:
-            return default
-        return instance
-
-    @classmethod
-    def s_get_from_dict(cls, session, values_dict):
-        """Return a single activity instance for the given id."""
-        return cls.s_get(session, values_dict['activity_id'], values_dict['split'])
-
-    @classmethod
-    def s_get_activity(cls, session, activity_id):
-        """Return all splits for a given activity_id."""
-        return session.query(cls).filter(cls.activity_id == activity_id).all()
-
-    @classmethod
-    def get_activity(cls, db, activity_id):
-        """Return all splits for a given activity_id."""
-        with db.managed_session() as session:
-            return cls.s_get_activity(session, activity_id)
 
 
 class ActivityRecords(ActivitiesDb.Base, idbutils.DbObject):
@@ -317,6 +464,66 @@ class ActivityRecords(ActivitiesDb.Base, idbutils.DbObject):
         self.position_long = location.long_deg
 
 
+class ActivitiesBestEffort(ActivitiesDb.Base, idbutils.DbObject):
+    """Class represents a database table that records best efforts for a given activity."""
+
+    __tablename__ = 'activities_best_effort'
+    __time_col_name__ = "start_time"
+
+    db = ActivitiesDb
+    table_version = 2
+
+    activity_id = Column(String, ForeignKey('activities.activity_id'), primary_key=True)
+    start_time = Column(DateTime)
+    sport = Column(Enum(fitfile.fields.Sport))
+    distance = Column(String)
+    time = Column(Time, nullable=False, default=datetime.time.min)
+    personal_record = Column(Boolean)
+
+    @classmethod
+    def s_get_activity(cls, session, activity_id):
+        """Return all activity best effort records for a given activity_id."""
+        return session.query(cls).filter(cls.activity_id == activity_id).all()
+
+    @classmethod
+    def get_activity(cls, db, activity_id):
+        """Return all activity best effort records for a given activity_id."""
+        with db.managed_session() as session:
+            return cls.s_get_activity(session, activity_id)
+
+
+class ActivitiesCourses(ActivitiesDb.Base, idbutils.DbObject):
+    """Class represents a database table that maps activities to course ids."""
+
+    __tablename__ = 'activities_courses'
+
+    db = ActivitiesDb
+    table_version = 2
+
+    activity_id = Column(String, primary_key=True)
+    course_id = Column(Integer)
+
+    @classmethod
+    def get_by_course_id(cls, db, course_id):
+        """Return all activities items for activities with the matching course_id."""
+        with db.managed_session() as session:
+            return session.query(cls).filter(cls.course_id == course_id).order_by(cls.start_time).all()
+
+    @classmethod
+    def get_fastest_by_course_id(cls, db, course_id):
+        """Return an activities items for the activity with the matching course_id with the fastest speed."""
+        with db.managed_session() as session:
+            return (session.query(Activities, cls).filter(cls.course_id == course_id).
+                    filter(cls.activity_id == Activities.activity_id).order_by(desc(Activities.avg_speed)).limit(1).one_or_none())
+
+    @classmethod
+    def get_slowest_by_course_id(cls, db, course_id):
+        """Return an activities items for the activity with the matching course_id with the slowest speed."""
+        with db.managed_session() as session:
+            return (session.query(Activities, cls).filter(cls.course_id == course_id).
+                    filter(cls.activity_id == Activities.activity_id).order_by(Activities.avg_speed).limit(1).one_or_none())
+
+
 class ActivitiesDevices(ActivitiesDb.Base, idbutils.DbObject):
     """Class represents a database table that maps device ids to activities (by id) that they were used in."""
 
@@ -327,7 +534,59 @@ class ActivitiesDevices(ActivitiesDb.Base, idbutils.DbObject):
 
     activity_id = Column(String)
     device_serial_number = Column(BigInteger)
+
     __table_args__ = (PrimaryKeyConstraint("activity_id", "device_serial_number"),)
+
+    @classmethod
+    def s_get_activity(cls, session, activity_id):
+        """Return all activity devices records for a given activity_id."""
+        return session.query(cls).filter(cls.activity_id == activity_id).all()
+
+    @classmethod
+    def get_activity(cls, db, activity_id):
+        """Return all activity devices records for a given activity_id."""
+        with db.managed_session() as session:
+            return cls.s_get_activity(session, activity_id)
+
+
+class ActivitiesEvaluations(ActivitiesDb.Base, idbutils.DbObject):
+    """Class represents a database table that that stores self evaluations for activities."""
+
+    __tablename__ = 'activities_evaluations'
+
+    db = ActivitiesDb
+    table_version = 1
+
+    activity_id = Column(String, ForeignKey('activities.activity_id'), primary_key=True)
+    self_eval_feel = Column(String)
+    self_eval_effort = Column(String)
+
+    @classmethod
+    def s_get_activity(cls, session, activity_id):
+        """Return all activity devices records for a given activity_id."""
+        return session.query(cls).filter(cls.activity_id == activity_id).all()
+
+    @classmethod
+    def get_activity(cls, db, activity_id):
+        """Return all activity devices records for a given activity_id."""
+        with db.managed_session() as session:
+            return cls.s_get_activity(session, activity_id)
+
+
+class ActivitiesDeviceUsed(ActivitiesDb.Base, idbutils.DbObject):
+    """Class represents a database table that show which devices were used for metrics during activities (by serial number)."""
+
+    __tablename__ = 'activities_devices_used'
+
+    db = ActivitiesDb
+    table_version = 2
+
+    activity_id = Column(String, ForeignKey('activities.activity_id'), primary_key=True)
+    speed_device_serial_number = Column(BigInteger)
+    distance_device_serial_number = Column(BigInteger)
+    cadence_device_serial_number = Column(BigInteger)
+    elevation_device_serial_number = Column(BigInteger)
+    heart_rate_device_serial_number = Column(BigInteger)
 
     @classmethod
     def s_get_activity(cls, session, activity_id):
@@ -357,7 +616,7 @@ class SportActivities(idbutils.DbObject):
         """Create a database view for a activity type."""
         view_name = cls._get_default_view_name()
         logger.debug("Creating activity view %s if needed.", view_name)
-        cls.create_join_view(db, view_name, selectable, Activities, order_by=Activities.start_time.desc())
+        cls.create_join_view(db, view_name, selectable, [Activities], order_by=Activities.start_time.desc())
 
     @classmethod
     def _create_sport_view(cls, db, selectable, sport):
@@ -365,12 +624,12 @@ class SportActivities(idbutils.DbObject):
         # SQL equality is `=` and string literals use single quotes. sqlite
         # tolerates `==` and double-quoted literals; postgres does not.
         filter = literal_column(f"{Activities.sport} = '{sport}'")
-        cls.create_join_view(db, f'{sport}_activities_view', selectable, Activities, filter, Activities.start_time.desc())
+        cls.create_join_view(db, f'{sport}_activities_view', selectable, [Activities], filter, Activities.start_time.desc())
 
     @classmethod
     def _create_course_view(cls, db, selectable, course_id):
-        filter = literal_column(f'{Activities.course_id} = {course_id}')
-        cls.create_join_view(db, f'course_{course_id}_view', selectable, Activities, filter, Activities.start_time.desc())
+        filter = literal_column(f'{ActivitiesCourses.course_id} = {course_id}')
+        cls.create_join_view(db, f'course_{course_id}_view', selectable, [Activities, ActivitiesCourses], filter, Activities.start_time.desc())
 
     @classmethod
     def create_view(cls, db):
@@ -412,6 +671,8 @@ class StepsActivities(ActivitiesDb.Base, SportActivities):
     avg_ground_contact_time = Column(Time, nullable=False, default=datetime.time.min)
     avg_stance_time_percent = Column(Float)
     vo2_max = Column(Float)
+    lactate_threshold_heart_rate = Column(Float)
+    lactate_threshold_speed = Column(Float)
 
     @classmethod
     def _view_selectable(cls, include_sport=False, include_subsport=False, include_type=False, include_course=False, include_rr=False, include_running_dynamics=False):
@@ -428,7 +689,7 @@ class StepsActivities(ActivitiesDb.Base, SportActivities):
         if include_type:
             selectable.append(Activities.type.label('type'))
         if include_course:
-            selectable.append(Activities.course_id.label('course_id'))
+            selectable.append(ActivitiesCourses.course_id.label('course_id'))
         selectable += [
             Activities.start_time.label('start_time'),
             Activities.stop_time.label('stop_time'),
@@ -476,9 +737,9 @@ class StepsActivities(ActivitiesDb.Base, SportActivities):
 
     @classmethod
     def create_view(cls, db):
-        cls._create_activity_view(db, cls._view_selectable(include_sport=True, include_subsport=True, include_type=True, include_course=True))
+        cls._create_activity_view(db, cls._view_selectable(include_sport=True, include_subsport=True, include_type=True))
         cls._create_sport_view(db, cls._view_selectable(), "walking")
-        cls._create_sport_view(db, cls._view_selectable(include_course=True, include_subsport=True, include_rr=True, include_running_dynamics=True), "running")
+        cls._create_sport_view(db, cls._view_selectable(include_subsport=True, include_rr=True, include_running_dynamics=True), "running")
         cls._create_sport_view(db, cls._view_selectable(), "hiking")
 
     @classmethod
@@ -638,6 +899,49 @@ class ClimbingActivities(ActivitiesDb.Base, SportActivities):
             Activities.ascent.label('ascent'),
             Activities.descent.label('descent'),
             cls.total_routes.label('total_routes'),
+            Activities.training_effect.label('training_effect'),
+            Activities.anaerobic_training_effect.label('anaerobic_training_effect'),
+            Activities.hrz_1_time.label('heart_rate_zone_one_time'),
+            Activities.hrz_2_time.label('heart_rate_zone_two_time'),
+            Activities.hrz_3_time.label('heart_rate_zone_three_time'),
+            Activities.hrz_4_time.label('heart_rate_zone_four_time'),
+            Activities.hrz_5_time.label('heart_rate_zone_five_time'),
+        ]
+
+
+class SwimmingActivities(ActivitiesDb.Base, SportActivities):
+    """Swimming based activity table."""
+
+    __tablename__ = 'swimming_activities'
+
+    db = ActivitiesDb
+    table_version = 1
+    view_version = 1
+
+    swim_time = Column(Time, nullable=False, default=datetime.time.min)
+    pool_length = Column(Integer)
+    length_count  = Column(Integer)
+    swolf = Column(Integer)
+
+    @classmethod
+    def _view_selectable(cls):
+        return [
+            Activities.activity_id.label('activity_id'),
+            Activities.name.label('name'),
+            Activities.description.label('description'),
+            Activities.sub_sport.label('sub_sport'),
+            Activities.start_time.label('start_time'),
+            Activities.stop_time.label('stop_time'),
+            Activities.elapsed_time.label('elapsed_time'),
+            Activities.moving_time.label('moving_time'),
+            Activities.avg_hr.label('avg_hr'),
+            Activities.max_hr.label('max_hr'),
+            Activities.calories.label('calories'),
+            Activities.ascent.label('ascent'),
+            Activities.descent.label('descent'),
+            cls.pool_length.label('pool_length'),
+            cls.length_count.label('length_count'),
+            cls.swolf.label('swolf'),
             Activities.training_effect.label('training_effect'),
             Activities.anaerobic_training_effect.label('anaerobic_training_effect'),
             Activities.hrz_1_time.label('heart_rate_zone_one_time'),

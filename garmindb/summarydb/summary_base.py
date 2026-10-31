@@ -16,19 +16,24 @@ class SummaryBase(DbObject):
     """Base class for implementing summary database objects."""
 
     view_version = 10
-    _table_version = 6
-    _col_units = {'hr_avg': 'bpm', 'hr_min': 'bpm', 'hr_max': 'bpm', 'rhr_avg': 'bpm', 'rhr_min': 'bpm', 'rhr_max': 'bpm', 'rr_waking_avg': 'brpm', 'rr_max': 'brpm',
+    _table_version = 7
+    _col_units = {'hr_avg': 'bpm', 'hr_min': 'bpm', 'hr_max': 'bpm', 'rhr_avg': 'bpm', 'rhr_min': 'bpm', 'rhr_max': 'bpm',
+                  'hrv_avg': 'ms', 'hrv_min': 'ms', 'hrv_max': 'ms',
+                  'rr_waking_avg': 'brpm', 'rr_max': 'brpm',
                   'rr_min': 'brpm'}
 
-    hr_avg = Column(Float)
-    hr_min = Column(Float)
-    hr_max = Column(Float)
-    rhr_avg = Column(Float)
-    rhr_min = Column(Float)
-    rhr_max = Column(Float)
-    inactive_hr_avg = Column(Float)
-    inactive_hr_min = Column(Float)
-    inactive_hr_max = Column(Float)
+    hr_avg = Column(Integer)
+    hr_min = Column(Integer)
+    hr_max = Column(Integer)
+    rhr_avg = Column(Integer)
+    rhr_min = Column(Integer)
+    rhr_max = Column(Integer)
+    inactive_hr_avg = Column(Integer)
+    inactive_hr_min = Column(Integer)
+    inactive_hr_max = Column(Integer)
+    hrv_avg = Column(Float)
+    hrv_min = Column(Float)
+    hrv_max = Column(Float)
     weight_avg = Column(Float)
     weight_min = Column(Float)
     weight_max = Column(Float)
@@ -46,12 +51,14 @@ class SummaryBase(DbObject):
     rem_sleep_avg = Column(Time, nullable=False, default=datetime.time.min)
     rem_sleep_min = Column(Time, nullable=False, default=datetime.time.min)
     rem_sleep_max = Column(Time, nullable=False, default=datetime.time.min)
+    sleep_score_avg = Column(Integer)
+    sleep_score_min = Column(Integer)
+    sleep_score_max = Column(Integer)
     stress_avg = Column(Integer)
     calories_avg = Column(Integer)
     calories_bmr_avg = Column(Integer)
     calories_active_avg = Column(Integer)
     calories_goal = Column(Integer)
-    calories_active_avg = Column(Integer)
     calories_consumed_avg = Column(Integer)
     activities = Column(Integer)
     activities_calories = Column(Integer)
@@ -135,6 +142,7 @@ class SummaryBase(DbObject):
             cls.time_col.label('first_day'),
             cls.round_col('rhr_avg', 'rhr'),
             cls.round_col('inactive_hr_avg', 'inactive_hr'),
+            cls.round_col('rhv_avg', 'rhv'),
             cls.round_col('weight_avg', 'weight'),
             cls.intensity_time.label('intensity_time'),
             cls.moderate_activity_time.label('moderate_activity_time'),
@@ -147,6 +155,7 @@ class SummaryBase(DbObject):
             cls.round_col_txt('round((floors * 100) / floors_goal)', 'floors_goal_percent'),
             cls.sleep_avg.label('sleep_avg'),
             cls.rem_sleep_avg.label('rem_sleep_avg'),
+            cls.sleep_score_avg.label('sleep_score_avg'),
             cls.round_col('stress_avg'),
             cls.round_col('calories_avg'),
             cls.round_col('calories_bmr_avg'),
@@ -190,6 +199,7 @@ class SummaryBase(DbObject):
             cls.round_col('hr_max'),
             cls.round_col('rhr_avg', 'rhr'),
             cls.round_col('inactive_hr_avg', 'inactive_hr'),
+            cls.round_col('hrv_avg'),
             cls.round_col('weight_avg', 'weight'),
             cls.intensity_time.label('intensity_time'), cls.moderate_activity_time.label('moderate_activity_time'), cls.vigorous_activity_time.label('vigorous_activity_time'),
             cls.steps.label('steps'),
@@ -200,6 +210,7 @@ class SummaryBase(DbObject):
             cls.round_col_txt('round((floors * 100) / floors_goal)', 'floors_goal_percent'),
             cls.sleep_avg.label('sleep_avg'),
             cls.rem_sleep_avg.label('rem_sleep_avg'),
+            cls.sleep_score_avg.label('sleep_score_avg'),
             cls.round_col('stress_avg'),
             cls.round_col('calories_avg'),
             cls.round_col('calories_bmr_avg'),

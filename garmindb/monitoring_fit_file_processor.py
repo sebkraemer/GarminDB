@@ -13,8 +13,8 @@ import fitfile
 import idbutils
 
 from .garmindb import File
-from .garmindb import MonitoringDb, Monitoring, MonitoringInfo, MonitoringHeartRate, MonitoringIntensity, MonitoringClimb, MonitoringRespirationRate, MonitoringPulseOx, \
-    MonitoringHrvValue, MonitoringHrvStatus
+from .garmindb import MonitoringDb, Monitoring, MonitoringInfo, MonitoringHeartRate, MonitoringRestingHeartRate, MonitoringIntensity, MonitoringClimb, MonitoringRespirationRate, \
+    MonitoringSpo2
 from .fit_file_processor import FitFileProcessor
 
 
@@ -89,9 +89,19 @@ class MonitoringFitFileProcessor(FitFileProcessor):
         except Exception:
             logger.error("Exception on monitoring entry: %r: %s", entry, traceback.format_exc())
 
-    def _write_respiration_entry(self, fit_file, message_fields):
-        logger.debug("respiration message: %r", message_fields)
-        rr = message_fields.get('respiration_rate')
+    def _write_monitoring_hr_data_entry(self, fit_file, message_fields):
+        logger.debug("monitoring_hr_data message: %r", message_fields)
+        rhr_data = {
+            'timestamp'                 : fit_file.utc_datetime_to_local(message_fields.timestamp),
+            'resting_heart_rate'        : message_fields.get('resting_heart_rate'),
+            'day_resting_heart_rate'    : message_fields.get('current_day_resting_heart_rate'),
+        }
+        MonitoringRestingHeartRate.s_insert_or_update(self.garmin_mon_db_session, rhr_data)
+        self._write_attribute(fit_file.time_created_local, message_fields, 'day_resting_heart_rate', 'resting_heart_rate', ignore_zero=True)
+
+    def _write_respiration_rate_entry(self, fit_file, message_fields):
+        logger.debug("respiration_rate message: %r", message_fields)
+        rr = message_fields.get('enhanced_respiration_rate')
         if rr > 0:
             respiration = {
                 'timestamp' : fit_file.utc_datetime_to_local(message_fields.timestamp),
@@ -102,43 +112,14 @@ class MonitoringFitFileProcessor(FitFileProcessor):
             else:
                 raise ValueError(f'Unexpected file type {repr(fit_file.type)} for respiration message')
 
-    def _write_pulse_ox_entry(self, fit_file, message_fields):
-        logger.debug("pulse_ox message: %r", message_fields)
-        if fit_file.type is fitfile.FileType.monitoring_b:
-            pulse_ox = message_fields.get('pulse_ox')
-            if pulse_ox is not None:
-                pulse_ox_entry = {
-                    'timestamp': fit_file.utc_datetime_to_local(message_fields.timestamp),
-                    'pulse_ox': pulse_ox,
-                }
-                MonitoringPulseOx.s_insert_or_update(self.garmin_mon_db_session, pulse_ox_entry)
-        else:
-            raise ValueError(f'Unexpected file type {repr(fit_file.type)} for pulse ox')
-
-    def _write_hrv_value_entry(self, fit_file, message_fields):
-        """Write an HRV reading entry to the database."""
-        logger.debug("hrv_value message: %r", message_fields)
-        hrv_value = message_fields.get('hrv_value')
-        if hrv_value is not None and hrv_value > 0:
-            # HRV values are scaled by 128 in the FIT file
-            hrv_entry = {
+    def _write_spo2_entry(self, fit_file, message_fields):
+        logger.debug("spo2 message: %r", message_fields)
+        spo2 = message_fields.get('reading_spo2')
+        if spo2 is not None:
+            spo2_entry = {
                 'timestamp': fit_file.utc_datetime_to_local(message_fields.timestamp),
-                'hrv': hrv_value / 128.0,  # Convert to milliseconds
+                'reading_spo2': spo2,
+                'reading_confidence': message_fields.get('reading_confidence'),
+                'measurement_type': message_fields.get('mode'),
             }
-            MonitoringHrvValue.s_insert_or_update(self.garmin_mon_db_session, hrv_entry)
-
-    def _write_hrv_status_summary_entry(self, fit_file, message_fields):
-        """Write an HRV status summary entry to the database."""
-        logger.debug("hrv_status_summary message: %r", message_fields)
-        # HRV values are scaled by 128 in the FIT file
-        hrv_status_entry = {
-            'timestamp': fit_file.utc_datetime_to_local(message_fields.timestamp),
-            'weekly_average': message_fields.get('weekly_average', 0) / 128.0 if message_fields.get('weekly_average') else None,
-            'last_night': message_fields.get('last_night', 0) / 128.0 if message_fields.get('last_night') else None,
-            'last_night_average': message_fields.get('last_night_average', 0) / 128.0 if message_fields.get('last_night_average') else None,
-            'baseline_low': message_fields.get('baseline_low', 0) / 128.0 if message_fields.get('baseline_low') else None,
-            'baseline_high': message_fields.get('baseline_high', 0) / 128.0 if message_fields.get('baseline_high') else None,
-            'status': message_fields.get('status'),
-            'reading_count': message_fields.get('reading_count'),
-        }
-        MonitoringHrvStatus.s_insert_or_update(self.garmin_mon_db_session, hrv_status_entry)
+            MonitoringSpo2.s_insert_or_update(self.garmin_mon_db_session, spo2_entry)

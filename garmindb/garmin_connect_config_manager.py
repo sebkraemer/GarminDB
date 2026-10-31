@@ -12,7 +12,7 @@ import datetime
 import tempfile
 
 from idbutils import JsonConfig
-from fitfile import Sport
+from fitfile.fields import Sport
 
 from .statistics import Statistics
 from idbutils import DbParams
@@ -157,6 +157,10 @@ class GarminConnectConfigManager(JsonConfig):
     def get_rhr_dir(self):
         """Return the configured directory of where the resting heart rate files will be stored."""
         return self.__create_dir_if_needed(self.get_base_dir() + os.sep + 'RHR')
+
+    def get_lifestyle_dir(self):
+        """Return the configured directory of where the resting heart rate files will be stored."""
+        return self.__create_dir_if_needed(self.get_base_dir() + os.sep + 'LifestyleLogging')
 
     def get_fitbit_dir(self):
         """Return the configured directory of where the FitBit will be stored."""

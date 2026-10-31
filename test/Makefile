@@ -9,12 +9,14 @@ include $(PROJECT_BASE)/defines.mk
 
 
 DB_TEST_GROUPS=garmin_db activities_db multisport_activity monitoring_db garmin_summary_db summary_db
-DB_OBJECTS_TEST_GROUPS=garmin_db_objects
-FILE_PARSE_TEST_GROUPS=fit_file tcx_loop tcx_file profile_file
-ALL_TEST_GROUPS=$(DB_TEST_GROUPS) $(DB_OBJECTS_TEST_GROUPS) $(FILE_PARSE_TEST_GROUPS)
+DB_OBJECTS_TEST_GROUPS=garmin_db_objects climbing_split sleep_json activity_types activity_json device_used
+FIT_FILE_TEST_GROUPS=activity_fit_file hrv_fit_file metrics_fit_file monitoring_fit_file skin_temp_fit_file sleep_disruptions_fit_file sleep_fit_file unknown_fit_file
+FILE_PARSE_TEST_GROUPS=tcx_loop tcx_file profile_file
+OUTPUT_TEST_GROUPS=progress simple_output
+ALL_TEST_GROUPS=$(DB_TEST_GROUPS) $(DB_OBJECTS_TEST_GROUPS) $(FILE_PARSE_TEST_GROUPS) $(FIT_FILE_TEST_GROUPS) $(OUTPUT_TEST_GROUPS)
 MANUAL_TEST_GROUPS=copy
 BASE_TESTGROUP=config module_versions
-TEST_GROUPS=$(DB_TEST_GROUPS) $(DB_OBJECTS_TEST_GROUPS) $(FILE_PARSE_TEST_GROUPS) $(MANUAL_TEST_GROUPS) $(BASE_TESTGROUP)
+TEST_GROUPS=$(DB_TEST_GROUPS) $(DB_OBJECTS_TEST_GROUPS) $(FILE_PARSE_TEST_GROUPS) $(FIT_FILE_TEST_GROUPS) $(MANUAL_TEST_GROUPS) $(BASE_TESTGROUP) $(OUTPUT_TEST_GROUPS)
 
 #
 # Over all targets
@@ -27,9 +29,11 @@ manual: $(MANUAL_TEST_GROUPS)
 
 file_parse: $(FILE_PARSE_TEST_GROUPS)
 
+fit_file: $(FIT_FILE_TEST_GROUPS)
+
 db_objects: $(DB_OBJECTS_TEST_GROUPS)
 
-verify_commit: module_versions db_objects
+verify_commit: module_versions db_objects fit_file $(OUTPUT_TEST_GROUPS)
 
 clean:
 	echo "Cleaning test"
@@ -45,6 +49,7 @@ $(TEST_GROUPS):
 	$(PYTHON_PATH) test_$@.py
 
 test_%:
+	echo $(PROJECT_BASE)
 	$(PYTHON_PATH) -m unittest -v $@
 
 .PHONY: all db file_parse db_objects clean

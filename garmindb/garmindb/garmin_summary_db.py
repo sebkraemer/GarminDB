@@ -23,6 +23,7 @@ class YearsSummary(GarminSummaryDb.Base, SummaryBase):
     """A table holding summarized data with one row per year."""
 
     __tablename__ = 'years_summary'
+    __time_col_name__ = "first_day"
 
     db = GarminSummaryDb
     table_version = SummaryBase._table_version
@@ -46,6 +47,7 @@ class MonthsSummary(GarminSummaryDb.Base, SummaryBase):
     """A table holding summarized data with one row per month."""
 
     __tablename__ = 'months_summary'
+    __time_col_name__ = "first_day"
 
     db = GarminSummaryDb
     table_version = SummaryBase._table_version
@@ -63,6 +65,7 @@ class WeeksSummary(GarminSummaryDb.Base, SummaryBase):
     """A table holding summarizzed data with one row per week."""
 
     __tablename__ = 'weeks_summary'
+    __time_col_name__ = "first_day"
 
     db = GarminSummaryDb
     table_version = SummaryBase._table_version
@@ -80,6 +83,7 @@ class DaysSummary(GarminSummaryDb.Base, SummaryBase):
     """A table holding summarized data with one row per day."""
 
     __tablename__ = 'days_summary'
+    __time_col_name__ = "day"
 
     db = GarminSummaryDb
     table_version = SummaryBase._table_version
@@ -103,6 +107,7 @@ class IntensityHR(GarminSummaryDb.Base, idbutils.DbObject):
     """Monitoring heart rate values that fall within a intensity period."""
 
     __tablename__ = 'intensity_hr'
+    __time_col_name__ = "timestamp"
 
     db = GarminSummaryDb
     table_version = 1
@@ -115,7 +120,7 @@ class IntensityHR(GarminSummaryDb.Base, idbutils.DbObject):
     def get_stats(cls, session, start_ts, end_ts):
         """Return a dictionary of aggregate statistics for the given time period."""
         return {
-            'inactive_hr_avg' : cls.s_get_col_avg_for_value(session, cls.heart_rate, cls.intensity, 0, start_ts, end_ts, True),
-            'inactive_hr_min' : cls.s_get_col_min_for_value(session, cls.heart_rate, cls.intensity, 0, start_ts, end_ts, True),
-            'inactive_hr_max' : cls.s_get_col_max_for_value(session, cls.heart_rate, cls.intensity, 0, start_ts, end_ts, True),
+            'inactive_hr_avg' : cls.s_get_col_avg_for_value(session, cls.heart_rate, cls.intensity, 0, start_ts, end_ts, True, 1),
+            'inactive_hr_min' : cls.s_get_col_min_for_value(session, cls.heart_rate, cls.intensity, 0, start_ts, end_ts, True, 1),
+            'inactive_hr_max' : cls.s_get_col_max_for_value(session, cls.heart_rate, cls.intensity, 0, start_ts, end_ts, True, 1),
         }

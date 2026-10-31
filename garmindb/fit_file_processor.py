@@ -7,6 +7,7 @@ __license__ = "GPL"
 import logging
 import sys
 import traceback
+import enum
 
 import fitfile
 
@@ -34,6 +35,7 @@ class FitFileProcessor():
         self.db_params = db_params
         self.debug = debug
         self.garmin_db = GarminDb(db_params, debug - 1)
+        self.device_index_to_serial_number = {}
 
     def _plugin_dispatch(self, plugins, handler_name, *args, **kwargs):
         result = {}
@@ -66,22 +68,25 @@ class FitFileProcessor():
         self.serial_number = None
         self.manufacturer = None
         self.product = None
+        self.device_index_to_serial_number = {}
         for message in messages:
             self._write_file_id_entry(fit_file, message.fields)
 
     def __write_message_type(self, fit_file, message_type):
-        messages = fit_file[message_type]
-        function = getattr(self, '_write_' + message_type.name, self.__write_generic)
-        function(fit_file, message_type, messages)
-        root_logger.debug("Processed %d %r entries for %s", len(messages), message_type, fit_file.filename)
+        if message_type in fit_file.message_types:
+            messages = fit_file[message_type]
+            function = getattr(self, '_write_' + message_type.name, self.__write_generic)
+            function(fit_file, message_type, messages)
+            root_logger.debug("Processed %d %r entries for %s", len(messages), message_type, fit_file.filename)
 
     def _write_message_types(self, fit_file, message_types):
         """Write all messages from the FIT file to the database ordered by message type."""
-        root_logger.info("Importing %s (%s) [%s] with message types: %s", fit_file.filename, fit_file.time_created_local, fit_file.type, message_types)
+        root_logger.info("Importing %s (%s) [%s] with %d messages and types: %s",
+                         fit_file.filename, fit_file.time_created_local, fit_file.type, len(fit_file.messages), message_types)
         #
         # Some ordering is important: 1. create new file entries 2. create new device entries
         #
-        priority_message_types = [fitfile.MessageType.file_id, fitfile.MessageType.device_info]
+        priority_message_types = [fitfile.MessageType.file_id, fitfile.MessageType.device_info, fitfile.MessageType.activity, fitfile.MessageType.event]
         for message_type in priority_message_types:
             self.__write_message_type(fit_file, message_type)
         for message_type in message_types:
@@ -103,14 +108,14 @@ class FitFileProcessor():
         if _manufacturer is not None:
             self.manufacturer = _manufacturer
         self.product = message_fields.product
-        device_type = fitfile.MainDeviceType.derive_device_type(self.manufacturer, self.product)
+        device_type = fitfile.fields.MainDeviceType.derive_device_type(self.manufacturer, self.product)
         if self.serial_number:
             device = {
                 'serial_number' : self.serial_number,
                 'timestamp'     : fit_file.utc_datetime_to_local(message_fields.time_created),
-                'device_type'   : fitfile.field_enums.name_for_enum(device_type),
+                'device_type'   : fitfile.name_for_enum(device_type),
                 'manufacturer'  : self.manufacturer,
-                'product'       : fitfile.field_enums.name_for_enum(self.product),
+                'product'       : fitfile.name_for_enum(self.product),
             }
             Device.s_insert_or_update(self.garmin_db_session, device)
         (file_id, file_name) = File.name_and_id_from_path(fit_file.filename)
@@ -124,13 +129,14 @@ class FitFileProcessor():
 
     def _write_device_info_entry(self, fit_file, message_fields):
         timestamp = fit_file.utc_datetime_to_local(message_fields.timestamp)
-        device_type = message_fields.get('device_type', fitfile.MainDeviceType.fitness_tracker)
+        device_index = message_fields.get('device_index')
+        device_type = message_fields.get('device_type', fitfile.fields.MainDeviceType.fitness_tracker)
         serial_number = message_fields.serial_number
         source_type = message_fields.source_type
         # local devices are part of the main device. Base missing fields off of the main device.
         # Fitfile returns 0 for an "invalid" / unset serial; treat the same as None so we
         # don't collide on a shared 0 PK across multiple sensors in the same activity.
-        if source_type is fitfile.field_enums.SourceType.local:
+        if source_type is fitfile.fields.SourceType.local:
             if (serial_number is None or serial_number == 0) and self.serial_number is not None and device_type is not None:
                 serial_number = Device.local_device_serial_number(self.serial_number, device_type)
         if serial_number is not None:
@@ -138,9 +144,9 @@ class FitFileProcessor():
             device = {
                 'serial_number'     : serial_number,
                 'timestamp'         : timestamp,
-                'device_type'       : fitfile.field_enums.name_for_enum(device_type),
+                'device_type'       : fitfile.name_for_enum(device_type),
                 'manufacturer'      : manufacturer or self.manufacturer,
-                'product'           : fitfile.field_enums.name_for_enum(message_fields.product or self.product),
+                'product'           : fitfile.name_for_enum(message_fields.product or self.product),
                 'hardware_version'  : message_fields.hardware_version
             }
             Device.s_insert_or_update(self.garmin_db_session, device, ignore_none=True)
@@ -154,11 +160,12 @@ class FitFileProcessor():
                 'software_version'      : message_fields.software_version
             }
             DeviceInfo.s_insert_or_update(self.garmin_db_session, device_info, ignore_none=True)
+            self.device_index_to_serial_number[device_index] = serial_number
             return serial_number
 
     def _write_stress_level_entry(self, fit_file, message_fields):
         stress = {
-            'timestamp' : message_fields.local_timestamp,
+            'timestamp' : message_fields.stress_level_time,
             'stress'    : message_fields.stress_level
         }
         Stress.s_insert_or_update(self.garmin_db_session, stress)
@@ -190,17 +197,26 @@ class FitFileProcessor():
     def _write_training_file_entry(self, fit_file, message_fields):
         root_logger.debug("Training file entry: %r", message_fields)
 
-    def _write_attribute(self, timestamp, message_fields, attribute_name, db_attribute_name=None):
+    def _write_attribute_db(self, timestamp, attribute_name, attribute_value):
+        root_logger.info("Writing attribute to garmin db: %r -> %r at %r", attribute_value, attribute_name, timestamp)
+        Attributes.s_set_newer(self.garmin_db_session, attribute_name, attribute_value, timestamp)
+
+    def _write_attribute(self, timestamp, message_fields, attribute_name, db_attribute_name=None, ignore_zero=False):
         attribute = message_fields.get(attribute_name)
         if attribute is not None:
             if db_attribute_name is None:
                 db_attribute_name = attribute_name
-            root_logger.info("Writing attribute: %r -> %r at %r", attribute, db_attribute_name, timestamp)
-            Attributes.s_set_newer(self.garmin_db_session, db_attribute_name, attribute, timestamp)
+            if isinstance(attribute, enum.Enum):
+                self._write_attribute_db(timestamp, db_attribute_name, attribute.name)
+            elif isinstance(attribute, int) or isinstance(attribute, float):
+                if ignore_zero is False or attribute > 0:
+                    self._write_attribute_db(timestamp, db_attribute_name, attribute)
+            else:
+                self._write_attribute_db(timestamp, db_attribute_name, attribute)
 
-    def _write_attributes(self, timestamp, message_fields, attribute_names):
+    def _write_attributes(self, timestamp, message_fields, attribute_names, ignore_zero=False):
         for attribute_name in attribute_names:
-            self._write_attribute(timestamp, message_fields, attribute_name)
+            self._write_attribute(timestamp, message_fields, attribute_name, ignore_zero=ignore_zero)
 
     def _write_measurement_sytem_attributes(self, timestamp, message_fields):
         for attribute_name in ['dist_setting', 'speed_setting', 'height_setting', 'temperature_setting']:
@@ -222,13 +238,12 @@ class FitFileProcessor():
         timestamp = fit_file.time_created_local
         attribute_names = [
             'gender', 'height', 'weight', 'age', 'year_of_birth', 'language', 'dist_setting', 'weight_setting', 'position_setting', 'elev_setting', 'sleep_time', 'wake_time',
-            'speed_setting'
+            'speed_setting', 'time_last_lthr_update'
         ]
         self._write_attributes(timestamp, message_fields, attribute_names)
+        attribute_names = ['user_running_step_length', 'user_walking_step_length']
+        self._write_attributes(timestamp, message_fields, attribute_names, ignore_zero=True)
         self._write_measurement_sytem_attributes(timestamp, message_fields)
-
-    def _write_activity_entry(self, fit_file, message_fields):
-        root_logger.debug("activity message: %r", message_fields)
 
     def _write_zones_target_entry(self, fit_file, message_fields):
         root_logger.debug("zones target message: %r", message_fields)

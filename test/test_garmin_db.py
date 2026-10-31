@@ -6,18 +6,17 @@ __license__ = "GPL"
 
 import unittest
 import logging
-import datetime
 
 import fitfile
 
-from garmindb import GarminConnectConfigManager, GarminSleepFitData, SleepFitFileProcessor
-from garmindb.garmindb import GarminDb, Attributes, Device, DeviceInfo, File, Weight, Stress, Sleep, SleepEvents, RestingHeartRate, Hrv
+from garmindb import GarminConnectConfigManager
+from garmindb.garmindb import GarminDb, Attributes, Device, DeviceInfo, File, Weight, Stress, RestingHeartRate, HrvStatusSummary
 
 from test_db_base import TestDBBase
 
 
 root_logger = logging.getLogger()
-handler = logging.FileHandler('garmin_db.log', 'w')
+handler = logging.FileHandler('test_garmin_db.log', 'w')
 root_logger.addHandler(handler)
 root_logger.setLevel(logging.INFO)
 
@@ -33,7 +32,7 @@ class TestGarminDb(TestDBBase, unittest.TestCase):
         cls.test_db_params = gc_config.get_db_params(test_db=True)
         print(f"db params {repr(cls.test_db_params)}")
         cls.garmin_db = GarminDb(db_params)
-        cls.measurement_system = fitfile.field_enums.DisplayMeasure.statute
+        cls.measurement_system = fitfile.MeasurementSystem.statute
         table_dict = {
             'attributes_table': Attributes,
             'device_table': Device,
@@ -41,10 +40,8 @@ class TestGarminDb(TestDBBase, unittest.TestCase):
             'file_table': File,
             'weight_table': Weight,
             'stress_table': Stress,
-            'sleep_table': Sleep,
-            'sleep_events_table': SleepEvents,
             'resting_heart_rate_table': RestingHeartRate,
-            'hrv_table': Hrv
+            'hrv_table': HrvStatusSummary
         }
         super().setUpClass(cls.garmin_db, table_dict, table_can_be_empty=['hrv_table'])
 
@@ -105,32 +102,10 @@ class TestGarminDb(TestDBBase, unittest.TestCase):
             (30, 100),
             (30, 100)
         )
-        self.check_col_stats(
-            self.garmin_db, Sleep, Sleep.total_sleep, 'Sleep', True, True,
-            (0, 10000000),
-            (datetime.time(8), datetime.time(16)),
-            (datetime.time(0), datetime.time(4)),
-            (datetime.time(4), datetime.time(10)),
-            (datetime.time(2), datetime.time(16))
-        )
-        self.check_col_stats(
-            self.garmin_db, Sleep, Sleep.rem_sleep, 'REM Sleep', True, True,
-            (0, 10000000),
-            (datetime.time(2), datetime.time(8)),           # max
-            (datetime.time(0), datetime.time(2)),           # min
-            (datetime.time(minute=30), datetime.time(6)),   # avg
-            (datetime.time(minute=10), datetime.time(6))    # latest
-        )
 
     def test_measurement_system(self):
-        measurement_system = Attributes.measurements_type(self.garmin_db, fitfile.field_enums.DisplayMeasure.metric)
-        self.assertIn(measurement_system, fitfile.field_enums.DisplayMeasure)
-
-    def test_sleep_import(self):
-        gfd = GarminSleepFitData('test_files/fit/sleep', latest=False, measurement_system=self.measurement_system, debug=2)
-        self.gfd_file_count = gfd.file_count()
-        if gfd.file_count() > 0:
-            gfd.process_files(SleepFitFileProcessor(self.test_db_params))
+        measurement_system = Attributes.measurements_type(self.garmin_db, fitfile.MeasurementSystem.metric)
+        self.assertIn(measurement_system, fitfile.MeasurementSystem)
 
 
 if __name__ == '__main__':

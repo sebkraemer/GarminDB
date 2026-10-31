@@ -22,7 +22,7 @@ What they can do:
 * Retain downloaded JSON and FIT files so that the DB can be regenerated without connecting to or redownloading data from Garmin Connect.
 * Export activities as TCX files.
 
-Once you have your data in the DB, I recommend using a supplied Jupyter notebooks, third party Jupyter notebooks, and/or SQLite browser like [SQLite Studio](http://sqlitestudio.pl), [HeidiSQL](https://www.heidisql.com/), or [DB Browser for SQLite](https://sqlitebrowser.org/) for browsing and working with the data. The scripts create some default [views](http://www.tutorialspoint.com/sqlite/sqlite_views.htm) in the DBs that make browsing the data easier.
+Once you have your data in the DB, I recommend using a supplied Jupyter notebooks, third party Jupyter notebooks, and/or SQLite browser like [Letos](https://letos.org/), [HeidiSQL](https://www.heidisql.com/), or [DB Browser for SQLite](https://sqlitebrowser.org/) for browsing and working with the data. The scripts create some default [views](http://www.tutorialspoint.com/sqlite/sqlite_views.htm) in the DBs that make browsing the data easier.
 
 # Using It
 
@@ -35,6 +35,17 @@ GarminDb releases are hosted on [PyPI](https://pypi.org/project/garmindb/). Garm
 * Ocassionally run `garmindb_cli.py --backup` to backup your DB files.
 
 Update to the latest release with `pip install --upgrade garmindb`.
+
+For container logs or redirected output, add `--simple-output` to the main CLI command:
+
+```sh
+garmindb_cli.py --all --download --import --analyze --latest --simple-output
+```
+
+This replaces progress bars with flushed, newline-delimited start and final-count messages on stderr, including JSON imports.
+Counts describe items visited, including skipped items and handled failures; they do not count successful downloads or committed database rows.
+A final count marks the end of that traversal, which may precede later steps such as archive extraction or database commit.
+Existing diagnostics and `--trace` behavior are unchanged. Without the flag, progress bars remain enabled.
 
 ## From Source
 
@@ -50,7 +61,7 @@ There is more help on [using the program](https://github.com/tcgoetz/GarminDB/wi
 
 # Jupyter Notebooks #
 
-Jupyter notebooks for analzing data from the database can be found in the 'Jupyter' directory in the source tree. [Links](https://github.com/tcgoetz/GarminDB/wiki/Related-Projects#jupyter-notebooks) to user submitted notebooks can be found in the wiki.
+Jupyter notebooks for analyzing data from the database can be found in the 'Jupyter' directory in the source tree. [Links](https://github.com/tcgoetz/GarminDB/wiki/Related-Projects#jupyter-notebooks) to user submitted notebooks can be found in the wiki.
 
 # Plugins #
 
@@ -79,4 +90,4 @@ Find out who's using GarminDb on what platforms, OSes, and python versions [here
 
 # Contributing
 
-Please submit a pull request targeting the develop branch and add your self to the contributors file. Run `make flake8` at the top level and fix all errors before submitting your pull request.
+Please submit a pull request targeting the **develop branch** and add your self to the contributors file. Run `make flake8` at the top level and fix all errors before submitting your pull request.

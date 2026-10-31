@@ -8,13 +8,15 @@ import sys
 import logging
 import datetime
 import calendar
-from tqdm import tqdm
 
 import fitfile
 
 from garmindb import summarydb
-from .garmindb import GarminDb, Attributes, Weight, Stress, RestingHeartRate, IntensityHR, Sleep, SleepEvents
+from .progress import progress
+from .garmindb import GarminDb, Attributes, Weight, Stress, RestingHeartRate, IntensityHR
 from .garmindb import MonitoringDb, Monitoring, MonitoringHeartRate, MonitoringIntensity, MonitoringClimb
+from .garmindb import SleepDb, Sleep
+from .garmindb import HrvDb, HrvStatusSummary
 from .garmindb import ActivitiesDb, Activities, StepsActivities
 from .garmindb import GarminSummaryDb, DaysSummary, DailySummary, WeeksSummary, MonthsSummary, YearsSummary
 
@@ -26,16 +28,20 @@ logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 class Analyze():
     """Object for analyzing health data from Garmin devices."""
 
-    def __init__(self, gc_config, debug):
+    def __init__(self, gc_config, debug, simple_output=False):
         """Return an instance of the Analyze class."""
         self.gc_config = gc_config
+        self.simple_output = simple_output
         self.garmin_db = GarminDb(self.gc_config.get_db_params(), debug)
         self.garmin_mon_db = MonitoringDb(self.gc_config.get_db_params(), debug)
+        self.sleep_db = SleepDb(self.gc_config.get_db_params(), debug)
+        self.hrv_db = HrvDb(self.gc_config.get_db_params(), debug)
         self.garmin_sum_db = GarminSummaryDb(self.gc_config.get_db_params(), debug)
         self.sum_db = summarydb.SummaryDb(self.gc_config.get_db_params(), debug)
         self.garmin_act_db = ActivitiesDb(self.gc_config.get_db_params(), debug)
         self.measurement_system = Attributes.measurements_type(self.garmin_db)
-        self.unit_strings = fitfile.units.unit_strings[self.measurement_system]
+        logger.debug(f"measurement_system {repr(self.measurement_system)}")
+        self.unit_strings = fitfile.unit_strings[self.measurement_system]
 
     def __populate_hr_intensity(self, day_date, garmin_mon_session, garmin_sum_session, overwrite=False):
         if IntensityHR.s_row_count_for_day(garmin_sum_session, day_date) == 0 or overwrite:
@@ -55,29 +61,7 @@ class Analyze():
                         IntensityHR.s_insert_or_update(garmin_sum_session, entry, ignore_none=True)
                 previous_ts = monitoring.timestamp
 
-    def __populate_sleep_for_day(self, day_date, garmin_session, overwrite=False):
-        """Ensure a Sleep row exists for the given day by summarizing SleepEvents if needed."""
-        existing = Sleep.s_row_count_for_day(garmin_session, day_date)
-
-        if existing == 0 or overwrite:
-            day_start_ts = datetime.datetime.combine(day_date, datetime.time.min)
-            day_stop_ts = datetime.datetime.combine(day_date, datetime.time.max)
-            first_event = SleepEvents.s_get_col_min(garmin_session, SleepEvents.timestamp, day_start_ts, day_stop_ts)
-            if first_event is None:
-
-                return
-            last_event = SleepEvents.s_get_col_max(garmin_session, SleepEvents.timestamp, day_start_ts, day_stop_ts)
-            stats = SleepEvents.get_day_stats(garmin_session, day_date)
-            entry = {
-                'day': day_date,
-                'start': first_event,
-                'end': last_event,
-                **stats,
-            }
-
-            Sleep.s_insert_or_update(garmin_session, entry, ignore_none=True)
-
-    def __calculate_day_stats(self, day_date, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session):
+    def __calculate_day_stats(self, day_date, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session):
         stats = DailySummary.get_daily_stats(garmin_session, day_date)
         # prefer getting stats from the daily summary.
         if stats.get('rhr_avg') is None:
@@ -93,31 +77,30 @@ class Analyze():
         stats.update(MonitoringHeartRate.get_daily_stats(garmin_mon_session, day_date))
         stats.update(IntensityHR.get_daily_stats(garmin_sum_session, day_date))
         stats.update(Weight.get_daily_stats(garmin_session, day_date))
-        stats.update(Sleep.get_daily_stats(garmin_session, day_date))
+        stats.update(Sleep.get_daily_stats(sleep_session, day_date))
+        stats.update(HrvStatusSummary.get_daily_stats(hrv_session, day_date))
         # save it to the db
         DaysSummary.s_insert_or_update(garmin_sum_session, stats)
         summarydb.DaysSummary.s_insert_or_update(sum_session, stats)
 
-    def __calculate_days(self, year, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session):
+    def __calculate_days(self, year, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session):
         days_mon = Monitoring.s_get_days(garmin_mon_session, year) or []
-        days_sleep = SleepEvents.s_get_days(garmin_session, year) or []
+        days_sleep = Sleep.s_get_days(sleep_session, year) or []
         days_all = sorted(set(days_mon) | set(days_sleep))
 
         if days_all:
-            for day in tqdm(days_all, unit='days'):
+            for day in progress(days_all, f'Analyzing monitoring and sleep days for {year}', unit='days', simple_output=self.simple_output):
                 day_dt = datetime.datetime(year=year, month=1, day=1) + datetime.timedelta(day - 1)
                 self.__populate_hr_intensity(day_dt, garmin_mon_session, garmin_sum_session)
-                # Ensure a summarized Sleep row exists when only SleepEvents are present
-                self.__populate_sleep_for_day(day_dt, garmin_session)
-                self.__calculate_day_stats(day_dt, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session)
+                self.__calculate_day_stats(day_dt, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session)
         days = Activities.s_get_days(garmin_act_session, year)
         if len(days):
-            for day in tqdm(days, unit='days'):
+            for day in progress(days, f'Analyzing activity days for {year}', unit='days', simple_output=self.simple_output):
                 stats = Activities.get_daily_stats(garmin_act_session, datetime.datetime(year=year, month=1, day=1) + datetime.timedelta(day - 1))
                 DaysSummary.s_insert_or_update(garmin_sum_session, stats)
                 summarydb.DaysSummary.s_insert_or_update(sum_session, stats)
 
-    def __calculate_week_stats(self, day_dt, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session):
+    def __calculate_week_stats(self, day_dt, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session):
         stats = DailySummary.get_weekly_stats(garmin_session, day_dt)
         # prefer getting stats from the daily summary.
         if stats.get('rhr_avg') is None:
@@ -133,19 +116,20 @@ class Analyze():
         stats.update(MonitoringHeartRate.get_weekly_stats(garmin_mon_session, day_dt))
         stats.update(IntensityHR.get_weekly_stats(garmin_sum_session, day_dt))
         stats.update(Weight.get_weekly_stats(garmin_session, day_dt))
-        stats.update(Sleep.get_weekly_stats(garmin_session, day_dt))
+        stats.update(Sleep.get_weekly_stats(sleep_session, day_dt))
+        stats.update(HrvStatusSummary.get_weekly_stats(hrv_session, day_dt))
         stats.update(Activities.get_weekly_stats(garmin_act_session, day_dt))
         # save it to the db
         WeeksSummary.s_insert_or_update(garmin_sum_session, stats)
         summarydb.WeeksSummary.s_insert_or_update(sum_session, stats)
 
-    def __calculate_weeks(self, year, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session):
-        for week_starting_day in tqdm(range(1, 365, 7), unit='weeks'):
+    def __calculate_weeks(self, year, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session):
+        for week_starting_day in progress(range(1, 365, 7), f'Analyzing weeks for {year}', unit='weeks', simple_output=self.simple_output):
             day_dt = datetime.datetime(year=year, month=1, day=1) + datetime.timedelta(week_starting_day - 1)
             if day_dt < datetime.datetime.now():
-                self.__calculate_week_stats(day_dt, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session)
+                self.__calculate_week_stats(day_dt, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session)
 
-    def __calculate_monitoring_month_stats(self, start_day_date, end_day_date, garmin_session, garmin_mon_session, garmin_sum_session, sum_session):
+    def __calculate_monitoring_month_stats(self, start_day_date, end_day_date, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_sum_session, sum_session):
         stats = DailySummary.get_monthly_stats(garmin_session, start_day_date, end_day_date)
         # prefer getting stats from the daily summary.
         if 'rhr_avg' in stats:
@@ -161,27 +145,28 @@ class Analyze():
         stats.update(MonitoringHeartRate.get_monthly_stats(garmin_mon_session, start_day_date, end_day_date))
         stats.update(IntensityHR.get_monthly_stats(garmin_sum_session, start_day_date, end_day_date))
         stats.update(Weight.get_monthly_stats(garmin_session, start_day_date, end_day_date))
-        stats.update(Sleep.get_monthly_stats(garmin_session, start_day_date, end_day_date))
+        stats.update(Sleep.get_monthly_stats(sleep_session, start_day_date, end_day_date))
+        stats.update(HrvStatusSummary.get_monthly_stats(hrv_session, start_day_date, end_day_date))
         # save it to the db
         MonthsSummary.s_insert_or_update(garmin_sum_session, stats)
         summarydb.MonthsSummary.s_insert_or_update(sum_session, stats)
 
-    def __calculate_months(self, year, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session):
+    def __calculate_months(self, year, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session):
         months = Monitoring.s_get_months(garmin_mon_session, year)
         if len(months):
-            for month in tqdm(months, unit='months'):
+            for month in progress(months, f'Analyzing monitoring months for {year}', unit='months', simple_output=self.simple_output):
                 start_day_dt = datetime.datetime(year=year, month=month, day=1)
                 end_day_dt = datetime.datetime(year=year, month=month, day=calendar.monthrange(year, month)[1])
-                self.__calculate_monitoring_month_stats(start_day_dt, end_day_dt, garmin_session, garmin_mon_session, garmin_sum_session, sum_session)
+                self.__calculate_monitoring_month_stats(start_day_dt, end_day_dt, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_sum_session, sum_session)
         months = Activities.s_get_months(garmin_act_session, year)
         if len(months):
-            for month in tqdm(months, unit='months'):
+            for month in progress(months, f'Analyzing activity months for {year}', unit='months', simple_output=self.simple_output):
                 stats = Activities.get_monthly_stats(garmin_act_session, datetime.datetime(year=year, month=month, day=1),
                                                      datetime.datetime(year=year, month=month, day=calendar.monthrange(year, month)[1]))
                 MonthsSummary.s_insert_or_update(garmin_sum_session, stats)
                 summarydb.MonthsSummary.s_insert_or_update(sum_session, stats)
 
-    def __calculate_year_stats(self, year, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session):
+    def __calculate_year_stats(self, year, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session):
         stats = DailySummary.get_yearly_stats(garmin_session, year)
         # prefer getting stats from the daily summary.
         if 'rhr_avg' in stats:
@@ -197,38 +182,46 @@ class Analyze():
         stats.update(MonitoringHeartRate.get_yearly_stats(garmin_mon_session, year))
         stats.update(IntensityHR.get_yearly_stats(garmin_sum_session, year))
         stats.update(Weight.get_yearly_stats(garmin_session, year))
-        stats.update(Sleep.get_yearly_stats(garmin_session, year))
+        stats.update(Sleep.get_yearly_stats(sleep_session, year))
+        stats.update(HrvStatusSummary.get_yearly_stats(hrv_session, year))
         stats.update(Activities.get_yearly_stats(garmin_act_session, year))
         # save it to the db
         YearsSummary.s_insert_or_update(garmin_sum_session, stats)
         summarydb.YearsSummary.s_insert_or_update(sum_session, stats)
 
     def __calculate_year(self, year):
-        with self.garmin_db.managed_session() as garmin_session, self.garmin_mon_db.managed_session() as garmin_mon_session, \
-                self.garmin_act_db.managed_session() as garmin_act_session, self.garmin_sum_db.managed_session() as garmin_sum_session, \
+        logger.info("Calculating year %s", year)
+        with self.garmin_db.managed_session() as garmin_session, \
+                self.garmin_mon_db.managed_session() as garmin_mon_session, \
+                self.sleep_db.managed_session() as sleep_session, \
+                self.hrv_db.managed_session() as hrv_session, \
+                self.garmin_act_db.managed_session() as garmin_act_session, \
+                self.garmin_sum_db.managed_session() as garmin_sum_session, \
                 self.sum_db.managed_session() as sum_session:
             # calculate part of the years
-            self.__calculate_days(year, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session)
-            self.__calculate_weeks(year, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session)
-            self.__calculate_months(year, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session)
+            self.__calculate_days(year, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session)
+            self.__calculate_weeks(year, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session)
+            self.__calculate_months(year, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session)
             # now calculate the year itself
-            self.__calculate_year_stats(year, garmin_session, garmin_mon_session, garmin_act_session, garmin_sum_session, sum_session)
+            self.__calculate_year_stats(year, garmin_session, garmin_mon_session, sleep_session, hrv_session, garmin_act_session, garmin_sum_session, sum_session)
 
     def summary(self):
         """Summarize Garmin health data. Daily, weekly, and monthly, tables will be generated."""
-
+        logger.info("Summarizing")
+        years_act = Activities.get_years(self.garmin_act_db)
         years_mon = Monitoring.get_years(self.garmin_mon_db)
         years_act = Activities.get_years(self.garmin_act_db)
-        years_sleep = SleepEvents.get_years(self.garmin_db)
+        years_sleep = Sleep.get_years(self.sleep_db)
+        years_hrv = HrvStatusSummary.get_years(self.hrv_db)
         # Rows with no timestamp (eg activities with no start_time) produce a None year; drop them before sorting.
-        years_all = sorted(list(set(years_mon + years_act + years_sleep) - {None}))
-
+        years_all = sorted(list(set(years_mon + years_act + years_sleep + years_hrv) - {None}))
+        logger.info("Summarizing years %s\n  monitoring %s\n  activities %s\n  sleep %s\n  hrv %s", years_all, years_mon, years_act, years_sleep, years_hrv)
         for year in years_all:
-
             self.__calculate_year(year)
 
     def create_dynamic_views(self):
         """Create database views specific to the data in this database."""
+        logger.info("Creating views")
         course_ids = self.gc_config.course_views('steps')
         if course_ids:
             for course_id in course_ids:

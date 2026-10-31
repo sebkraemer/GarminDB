@@ -19,16 +19,17 @@ from garmindb.garmindb import ActivitiesDb, Activities, ActivityLaps, ActivityRe
 
 
 root_logger = logging.getLogger()
-root_logger.addHandler(logging.FileHandler('multisport_activity.log', 'w'))
-root_logger.setLevel(logging.WARNING)
+root_logger.addHandler(logging.FileHandler('test_multisport_activity.log', 'w'))
+root_logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
 
 # Garmin names each activity FIT file <activity_id>_ACTIVITY.fit; the parent id is the filename prefix.
-PARENT_ID = '22638574127'
+PARENT_ID = '10000000001'
 FIXTURE = f'test_files/fit/activity/{PARENT_ID}_ACTIVITY.fit'
 EXPECTED_SESSION_LAP_COUNTS = [14, 1, 6, 1, 3]  # swim / T1 / run / T2 / swim
+EXPECTED_RECORD_COUNT = 3682  # the file has one more record, which is outside of every session
 EXPECTED_SPORTS = [
     ('swimming', 'lap_swimming'),
     ('transition', 'generic'),
@@ -44,16 +45,13 @@ class TestMultisportActivity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.gc_config = GarminConnectConfigManager()
-        cls.tmp_dir = tempfile.mkdtemp(prefix='garmindb_multisport_test_')
-        cls.db_params = DbParams(db_type='sqlite', db_path=cls.tmp_dir)
-        cls.act_db = ActivitiesDb(cls.db_params)
-        plugin_manager = PluginManager(cls.gc_config.get_plugins_dir(), cls.db_params)
-        processor = ActivityFitFileProcessor(cls.db_params, plugin_manager, debug=0)
-        processor.write_file(fitfile.file.File(FIXTURE))
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.tmp_dir, ignore_errors=True)
+        cls.test_db_params = cls.gc_config.get_db_params(test_db=True)
+        root_logger.debug("test_db_params %r", cls.test_db_params)
+        cls.act_db = ActivitiesDb(cls.test_db_params, debug_level=1)
+        plugin_manager = PluginManager(cls.gc_config.get_plugins_dir(), cls.test_db_params)
+        processor = ActivityFitFileProcessor(cls.test_db_params, plugin_manager, debug=0)
+        cls.fit_file = fitfile.file.File(FIXTURE)
+        processor.write_file(cls.fit_file)
 
     def test_creates_one_row_per_session(self):
         with self.act_db.managed_session() as session:
@@ -95,7 +93,7 @@ class TestMultisportActivity(unittest.TestCase):
                              f'{activity_id}: laps should be 0..N contiguous, got {laps}')
 
     def test_lap_data_populated(self):
-        """Regression for the hr_zones_timer / lap write-order bug: lap rows must have distance and elapsed_time."""
+        """Regression for the time_in_zone / lap write-order bug: lap rows must have distance and elapsed_time."""
         run_id = f'{PARENT_ID}_3'  # running leg has 6 km laps
         with self.act_db.managed_session() as session:
             laps = session.query(ActivityLaps).filter(ActivityLaps.activity_id == run_id).all()
@@ -110,6 +108,18 @@ class TestMultisportActivity(unittest.TestCase):
                 activity_id = f'{PARENT_ID}_{i}'
                 count = session.query(ActivityRecords).filter(ActivityRecords.activity_id == activity_id).count()
                 self.assertGreater(count, 0, f'{activity_id} should have at least one record')
+
+    def test_every_record_is_written(self):
+        with self.act_db.managed_session() as session:
+            count = session.query(ActivityRecords).filter(ActivityRecords.activity_id.like(f'{PARENT_ID}_%')).count()
+        self.assertEqual(count, EXPECTED_RECORD_COUNT)
+
+    def test_importing_again_does_not_duplicate_or_lose_records(self):
+        plugin_manager = PluginManager(self.gc_config.get_plugins_dir(), self.test_db_params)
+        ActivityFitFileProcessor(self.test_db_params, plugin_manager, debug=0).write_file(self.fit_file)
+        with self.act_db.managed_session() as session:
+            count = session.query(ActivityRecords).filter(ActivityRecords.activity_id.like(f'{PARENT_ID}_%')).count()
+        self.assertEqual(count, EXPECTED_RECORD_COUNT)
 
     def test_devices_linked_to_every_child(self):
         with self.act_db.managed_session() as session:
