@@ -464,6 +464,54 @@ class ActivityRecords(ActivitiesDb.Base, idbutils.DbObject):
         self.position_long = location.long_deg
 
 
+class ActivitySets(ActivitiesDb.Base, idbutils.DbObject):
+    """Exercise sets of a strength training activity, as stored in Garmin Connect (exerciseSets endpoint).
+
+    Garmin Connect is the authoritative source: sets corrected there (exercise, repetitions, weight) differ from the
+    original FIT file of the activity.
+    """
+
+    __tablename__ = 'activity_sets'
+
+    db = ActivitiesDb
+    table_version = 1
+
+    activity_id = Column(String, ForeignKey('activities.activity_id'))
+    # position of the set in the activity, sets ordered by start time
+    set_index = Column(Integer)
+    # ACTIVE or REST
+    set_type = Column(String)
+    # local time
+    start_time = Column(DateTime)
+    duration = Column(Time)
+    # Garmin exercise category and name, e.g. BENCH_PRESS and BARBELL_BENCH_PRESS; the name can be missing
+    exercise_category = Column(String)
+    exercise_name = Column(String)
+    repetitions = Column(Integer)
+    # kilograms or pounds depending on the measurement system (Garmin Connect returns grams); None if no weight
+    weight = Column(Float)
+    # index of the workout step the set belongs to; None for sets added manually
+    workout_step_index = Column(Integer)
+
+    __table_args__ = (PrimaryKeyConstraint("activity_id", "set_index"),)
+
+    @classmethod
+    def s_delete_from(cls, session, activity_id, set_index):
+        """Delete the sets of an activity starting at set_index, e.g. sets that were removed in Garmin Connect."""
+        session.query(cls).filter(cls.activity_id == activity_id).filter(cls.set_index >= set_index).delete()
+
+    @classmethod
+    def s_get_activity(cls, session, activity_id):
+        """Return all sets of an activity ordered by set index."""
+        return session.query(cls).filter(cls.activity_id == activity_id).order_by(cls.set_index).all()
+
+    @classmethod
+    def get_activity(cls, db, activity_id):
+        """Return all sets of an activity ordered by set index."""
+        with db.managed_session() as session:
+            return cls.s_get_activity(session, activity_id)
+
+
 class ActivitiesBestEffort(ActivitiesDb.Base, idbutils.DbObject):
     """Class represents a database table that records best efforts for a given activity."""
 
