@@ -129,6 +129,58 @@ class TestDownloadAuthAdapter(unittest.TestCase):
                 download.get_activities(self.temp_dir.name, 2)
         self.assertTrue(os.path.isfile(os.path.join(self.temp_dir.name, "1_ACTIVITY.fit")))
 
+    def prepare_activity(self, download, last_update="2026-10-01T00:00:00.0"):
+        """Make the fake adapter return activity details with the given lastUpdateDate."""
+        adapter = FakeAdapter.instances[0]
+
+        def connectapi(path, **kwargs):
+            adapter.connectapi_calls.append((path, kwargs))
+            return {"metadataDTO": {"lastUpdateDate": last_update}}
+
+        adapter.connectapi = connectapi
+        download.temp_dir = self.temp_dir.name
+        return adapter
+
+    def write_file(self, name, content="{}"):
+        with open(os.path.join(self.temp_dir.name, name), "w", encoding="utf-8") as file:
+            file.write(content)
+
+    def test_missing_activity_files_are_downloaded_when_details_are_unchanged(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download)
+        self.write_file("activity_details_42.json", '{"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}')
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, {"activityId": 42, "activityName": "walk"}, False)
+
+        self.assertTrue(os.path.isfile(os.path.join(self.temp_dir.name, "activity_42.json")))
+        self.assertEqual(adapter.download_calls, ["/download-service/files/activity/42"])
+
+    def test_complete_activity_is_not_downloaded_again(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download)
+        self.write_file("activity_details_42.json", '{"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}')
+        self.write_file("activity_42.json")
+        self.write_file("42_ACTIVITY.fit", "fit")
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, {"activityId": 42, "activityName": "walk"}, False)
+
+        self.assertEqual([path for path, _kwargs in adapter.connectapi_calls], ["/activity-service/activity/42"])
+        self.assertEqual(adapter.download_calls, [])
+
+    def test_overwrite_downloads_the_fit_file_again(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download)
+        self.write_file("activity_details_42.json", '{"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}')
+        self.write_file("activity_42.json")
+        self.write_file("42_ACTIVITY.fit", "fit")
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, {"activityId": 42, "activityName": "walk"}, True)
+
+        self.assertEqual(adapter.download_calls, ["/download-service/files/activity/42"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

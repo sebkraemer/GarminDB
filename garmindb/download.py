@@ -5,6 +5,7 @@ __copyright__ = "Copyright Tom Goetz"
 __license__ = "GPL"
 
 import os
+import glob
 import sys
 import re
 import logging
@@ -244,16 +245,23 @@ class Download():
         except GarminConnectAuthError as e:
             root_logger.error("Exception downloading activity file: %s", e)
 
+    @classmethod
+    def _activity_fit_file_exists(cls, directory, activity_id_str):
+        """Return True if the FIT file of the activity was already downloaded and unzipped (e.g. <id>_ACTIVITY.fit)."""
+        return os.path.isfile(f'{directory}/{activity_id_str}.fit') or len(glob.glob(f'{directory}/{activity_id_str}_*.fit')) > 0
+
     def get_activity(self, directory, activity, overwrite):
         activity_id_str = str(activity['activityId'])
         activity_name_str = conversions.printable(activity.get('activityName'))
         if self.__save_activity_details(directory, activity_id_str):
             root_logger.info("get_activity: %s (%s)", activity_name_str, activity_id_str)
-            self.save_json_to_file(f'{directory}/activity_{activity_id_str}', activity)
-            if not os.path.isfile(f'{directory}/{activity_id_str}.fit') or overwrite:
-                self.__save_activity_file(activity_id_str)
-            else:
-                root_logger.info("get_activity: skipping download of %s, already present", activity_id_str)
+        # The summary and the FIT file don't depend on whether the details changed: get them whenever they are
+        # missing, e.g. because an earlier run stopped after saving the details.
+        self.save_json_to_file(f'{directory}/activity_{activity_id_str}', activity)
+        if overwrite or not self._activity_fit_file_exists(directory, activity_id_str):
+            self.__save_activity_file(activity_id_str)
+        else:
+            root_logger.debug("get_activity: skipping download of %s, already present", activity_id_str)
         # pause for a second between every page access
         time.sleep(1)
 
