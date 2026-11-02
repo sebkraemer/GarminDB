@@ -5,7 +5,9 @@ __copyright__ = "Copyright Tom Goetz"
 __license__ = "GPL"
 
 
+import os
 import sys
+import json
 import logging
 import dateutil.parser
 
@@ -13,7 +15,7 @@ import fitfile
 from idbutils import JsonFileProcessor
 
 from .garmin_connect_enums import Event, get_summary_sport, get_details_sport
-from .garmindb import ActivitiesDb, Activities, ActivitiesCourses, ActivitiesEvaluations, StepsActivities, PaddleActivities, CycleActivities
+from .garmindb import ActivitiesDb, Activities, ActivitiesCourses, ActivitiesEvaluations, ActivitySets, StepsActivities, PaddleActivities, CycleActivities
 
 
 logger = logging.getLogger(__file__)
@@ -338,3 +340,73 @@ class GarminJsonDetailsData(GarminJsonActivityData):
         if sport is not None:
             self._call_process_func(sport.name, sub_sport, activity_id, json_data)
         return 1
+
+
+class GarminJsonExerciseSetsData(GarminJsonActivityData):
+    """Class for importing the exercise sets of strength training activities from Garmin Connect exerciseSets JSON downloads."""
+
+    _progress_label = 'Processing activity exercise sets JSON files'
+
+    def __init__(self, db_params, input_dir, latest, measurement_system, debug, simple_output=False):
+        """
+        Return an instance of GarminJsonExerciseSetsData.
+
+        Parameters:
+        ----------
+        db_params (dict): configuration data for accessing the database
+        input_dir (string): directory (full path) to check for data files
+        latest (Boolean): check for latest files only
+        measurement_system (enum): which measurement system to use when importing the files
+        debug (Boolean): enable debug logging
+        simple_output (Boolean): print progress as lines instead of a progress bar
+
+        """
+        logger.info("Processing activities exercise sets data")
+        super().__init__(db_params, r'activity_exercise_sets_\d*\.json', input_dir, latest, measurement_system, debug, simple_output=simple_output)
+        self.input_dir = input_dir
+
+    def _utc_offset(self, activity_id):
+        """Return local time minus UTC for the activity, taken from its details JSON, or None if that isn't available."""
+        details_filename = os.path.join(self.input_dir, f'activity_details_{activity_id}.json')
+        try:
+            with open(details_filename, 'r') as file:
+                summary_dto = json.load(file)['summaryDTO']
+            start_local = dateutil.parser.parse(summary_dto['startTimeLocal'], ignoretz=True)
+            start_gmt = dateutil.parser.parse(summary_dto['startTimeGMT'], ignoretz=True)
+            return start_local - start_gmt
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            root_logger.warning("No UTC offset for the exercise sets of activity %s, set start times not stored: %s", activity_id, e)
+            return None
+
+    def _weight(self, grams):
+        # Garmin Connect returns grams; -1 or None means the set has no weight
+        if grams is None or grams < 0:
+            return None
+        return fitfile.Weight.from_grams(grams).kgs_or_lbs(self.measurement_system)
+
+    def _activities_process_json(self, json_data):
+        activity_id = json_data['activityId']
+        utc_offset = self._utc_offset(activity_id)
+        # Garmin doesn't always return the sets in order; sets without a start time go last, in their original order.
+        exercise_sets = sorted(json_data.get('exerciseSets') or [], key=lambda exercise_set: (exercise_set.get('startTime') is None, exercise_set.get('startTime') or ''))
+        for set_index, exercise_set in enumerate(exercise_sets):
+            # the same exercise is often listed several times, the first entry is the one Garmin Connect shows
+            exercise = (exercise_set.get('exercises') or [{}])[0]
+            start_time = exercise_set.get('startTime')
+            activity_set = {
+                'activity_id'           : activity_id,
+                'set_index'             : set_index,
+                'set_type'              : exercise_set.get('setType'),
+                'start_time'            : dateutil.parser.parse(start_time, ignoretz=True) + utc_offset if start_time and utc_offset is not None else None,
+                'duration'              : fitfile.conversions.secs_to_dt_time(exercise_set.get('duration')),
+                'exercise_category'     : exercise.get('category'),
+                'exercise_name'         : exercise.get('name'),
+                'repetitions'           : exercise_set.get('repetitionCount'),
+                'weight'                : self._weight(exercise_set.get('weight')),
+                'workout_step_index'    : exercise_set.get('wktStepIndex'),
+            }
+            # ignore_none=False: a value removed in Garmin Connect (e.g. the weight) must be removed here too
+            ActivitySets.s_insert_or_update(self.garmin_act_db_session, activity_set, ignore_none=False)
+        # sets deleted in Garmin Connect
+        ActivitySets.s_delete_from(self.garmin_act_db_session, activity_id, len(exercise_sets))
+        return len(exercise_sets)

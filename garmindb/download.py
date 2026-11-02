@@ -49,6 +49,9 @@ class Download():
 
     # https://connect.garmin.com/modern/proxy/usersummary-service/usersummary/hydration/allData/2019-11-29
 
+    # activity types (activityType.typeKey) whose exercise sets (exercise, reps, weight per set) are downloaded
+    exercise_sets_activity_types = ('strength_training',)
+
     download_days_overlap = 3  # Existing donloaded data will be redownloaded and overwritten if it is within this number of days of now.
 
     def __init__(self, gc_config, simple_output=False):
@@ -271,11 +274,27 @@ class Download():
         """Return True if the FIT file of the activity was already downloaded and unzipped (e.g. <id>_ACTIVITY.fit)."""
         return os.path.isfile(f'{directory}/{activity_id_str}.fit') or len(glob.glob(f'{directory}/{activity_id_str}_*.fit')) > 0
 
+    def __save_activity_exercise_sets(self, directory, activity_id_str, overwrite):
+        """Download the exercise sets of a strength training activity if they are missing or overwrite is set."""
+        json_filename = f'{directory}/activity_exercise_sets_{activity_id_str}'
+        if not overwrite and os.path.isfile(f'{json_filename}.json'):
+            return
+        url = f'{self.garmin_connect_activity_service_url}/{activity_id_str}/exerciseSets'
+        try:
+            self.save_json_to_file(json_filename, self.garmin.connectapi(url), True)
+        except GarminConnectAuthError as e:
+            root_logger.error("Exception getting activity exercise sets %s", e)
+
     def get_activity(self, directory, activity, overwrite):
         activity_id_str = str(activity['activityId'])
         activity_name_str = conversions.printable(activity.get('activityName'))
-        if self.__save_activity_details(directory, activity_id_str):
+        details_changed = self.__save_activity_details(directory, activity_id_str)
+        if details_changed:
             root_logger.info("get_activity: %s (%s)", activity_name_str, activity_id_str)
+        if (activity.get('activityType') or {}).get('typeKey') in self.exercise_sets_activity_types:
+            # Sets corrected in Garmin Connect only show up in this endpoint, not in the FIT file. Editing an activity
+            # updates the lastUpdateDate of its details, so get the sets again whenever the details changed.
+            self.__save_activity_exercise_sets(directory, activity_id_str, details_changed or overwrite)
         # The summary and the FIT file don't depend on whether the details changed: get them whenever they are
         # missing, e.g. because an earlier run stopped after saving the details.
         self.save_json_to_file(f'{directory}/activity_{activity_id_str}', activity)

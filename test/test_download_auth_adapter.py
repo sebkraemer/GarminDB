@@ -303,6 +303,55 @@ class TestDownloadAuthAdapter(unittest.TestCase):
 
         self.assertEqual(adapter.download_calls, ["/download-service/files/activity/42"])
 
+    def strength_activity(self):
+        return {"activityId": 42, "activityName": "strength", "activityType": {"typeKey": "strength_training"}}
+
+    def requested_paths(self, adapter):
+        return [path for path, _kwargs in adapter.connectapi_calls]
+
+    def test_exercise_sets_downloaded_for_new_strength_training(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download)
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, self.strength_activity(), False)
+
+        self.assertIn("/activity-service/activity/42/exerciseSets", self.requested_paths(adapter))
+        self.assertTrue(os.path.isfile(os.path.join(self.temp_dir.name, "activity_exercise_sets_42.json")))
+
+    def test_exercise_sets_not_requested_for_other_sports(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download)
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, {"activityId": 42, "activityType": {"typeKey": "running"}}, False)
+
+        self.assertNotIn("/activity-service/activity/42/exerciseSets", self.requested_paths(adapter))
+
+    def test_existing_exercise_sets_not_requested_when_details_unchanged(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download)
+        self.write_file("activity_details_42.json", '{"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}')
+        self.write_file("activity_exercise_sets_42.json", '{"exerciseSets": []}')
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, self.strength_activity(), False)
+
+        self.assertNotIn("/activity-service/activity/42/exerciseSets", self.requested_paths(adapter))
+
+    def test_exercise_sets_downloaded_again_when_details_changed(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download, last_update="2026-10-05T00:00:00.0")
+        self.write_file("activity_details_42.json", '{"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}')
+        self.write_file("activity_exercise_sets_42.json", '{"exerciseSets": []}')
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, self.strength_activity(), False)
+
+        self.assertIn("/activity-service/activity/42/exerciseSets", self.requested_paths(adapter))
+        with open(os.path.join(self.temp_dir.name, "activity_exercise_sets_42.json"), encoding="utf-8") as file:
+            self.assertIn("metadataDTO", json.load(file))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
