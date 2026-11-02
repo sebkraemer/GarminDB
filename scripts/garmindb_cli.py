@@ -32,7 +32,7 @@ from garmindb import GarminUserSettings, GarminSocialProfile, GarminPersonalInfo
     GarminConnectSleepData, GarminRhrData, GarminSettingsFitData, GarminHydrationData
 from garmindb import GarminConnectHrvData
 from garmindb import GarminConnectLifestyleLogging
-from garmindb import GarminJsonSummaryData, GarminJsonDetailsData, GarminTcxData, GarminActivitiesFitData
+from garmindb import GarminJsonSummaryData, GarminJsonDetailsData, GarminJsonExerciseSetsData, GarminTcxData, GarminActivitiesFitData
 from garmindb import ActivityExporter
 
 from garmindb import GarminConnectConfigManager, PluginManager
@@ -273,6 +273,10 @@ class GarminDbMain():
             gdjd = GarminJsonDetailsData(self.gc_config.get_db_params(), activities_dir, latest, measurement_system, debug, simple_output=simple_output)
             if gdjd.file_count() > 0:
                 gdjd.process()
+
+            gjesd = GarminJsonExerciseSetsData(self.gc_config.get_db_params(), activities_dir, latest, measurement_system, debug, simple_output=simple_output)
+            if gjesd.file_count() > 0:
+                gjesd.process()
 
             gfd = GarminActivitiesFitData(activities_dir, latest, measurement_system, debug, simple_output=simple_output)
             if gfd.file_count() > 0:
