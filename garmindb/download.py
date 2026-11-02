@@ -262,9 +262,13 @@ class Download():
         self.temp_dir = tempfile.mkdtemp()
         logger.info("Getting activities: '%s' (%d) temp %s", directory, count, self.temp_dir)
         activities = self.__get_activity_summaries(0, count)
-        for activity in progress(activities or [], 'Downloading activities', unit='activities', simple_output=self.simple_output):
-            self.get_activity(directory, activity, overwrite)
-        self.__unzip_files(directory)
+        try:
+            for activity in progress(activities or [], 'Downloading activities', unit='activities', simple_output=self.simple_output):
+                self.get_activity(directory, activity, overwrite)
+        finally:
+            # Unzip what was downloaded even if the loop stops early (error, rate limit, Ctrl-C);
+            # the zips are in a temp dir and would be lost otherwise.
+            self.__unzip_files(directory)
 
     def get_activity_types(self, directory, overwrite):
         """Download the activity types from Garmin Connect and save to a JSON file."""

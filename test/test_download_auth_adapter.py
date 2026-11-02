@@ -6,9 +6,11 @@ __license__ = "GPL"
 
 import json
 import datetime
+import io
 import os
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 from garmindb.download import Download
@@ -100,6 +102,32 @@ class TestDownloadAuthAdapter(unittest.TestCase):
         path, kwargs = FakeAdapter.instances[0].connectapi_calls[0]
         self.assertEqual(path, "/usersummary-service/usersummary/daily/display")
         self.assertEqual(kwargs["params"]["calendarDate"], "2024-01-02")
+
+    def test_activity_files_downloaded_before_an_error_are_unzipped(self):
+        download = self.create_download()
+        adapter = FakeAdapter.instances[0]
+        activities = [{"activityId": 1, "activityName": "one"}, {"activityId": 2, "activityName": "two"}]
+
+        def connectapi(path, **kwargs):
+            adapter.connectapi_calls.append((path, kwargs))
+            if path.startswith("/activitylist-service"):
+                return activities
+            if path.endswith("/2"):
+                raise RuntimeError("stop in the middle")
+            return {"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}
+
+        def zipped_fit(path):
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr(f"{path.rsplit('/', 1)[-1]}_ACTIVITY.fit", b"fit")
+            return buffer.getvalue()
+
+        adapter.connectapi = connectapi
+        adapter.download = zipped_fit
+        with patch("garmindb.download.time.sleep"):
+            with self.assertRaises(RuntimeError):
+                download.get_activities(self.temp_dir.name, 2)
+        self.assertTrue(os.path.isfile(os.path.join(self.temp_dir.name, "1_ACTIVITY.fit")))
 
 
 if __name__ == "__main__":
