@@ -6,9 +6,11 @@ __license__ = "GPL"
 
 import json
 import datetime
+import io
 import os
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 from garmindb.download import Download
@@ -222,6 +224,84 @@ class TestDownloadAuthAdapter(unittest.TestCase):
 
         self.assertEqual(len(adapter.connectapi_calls), 3)
         self.assertEqual(sleep.call_count, 3)
+
+    def test_activity_files_downloaded_before_an_error_are_unzipped(self):
+        download = self.create_download()
+        adapter = FakeAdapter.instances[0]
+        activities = [{"activityId": 1, "activityName": "one"}, {"activityId": 2, "activityName": "two"}]
+
+        def connectapi(path, **kwargs):
+            adapter.connectapi_calls.append((path, kwargs))
+            if path.startswith("/activitylist-service"):
+                return activities
+            if path.endswith("/2"):
+                raise RuntimeError("stop in the middle")
+            return {"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}
+
+        def zipped_fit(path):
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr(f"{path.rsplit('/', 1)[-1]}_ACTIVITY.fit", b"fit")
+            return buffer.getvalue()
+
+        adapter.connectapi = connectapi
+        adapter.download = zipped_fit
+        with patch("garmindb.download.time.sleep"):
+            with self.assertRaises(RuntimeError):
+                download.get_activities(self.temp_dir.name, 2)
+        self.assertTrue(os.path.isfile(os.path.join(self.temp_dir.name, "1_ACTIVITY.fit")))
+
+    def prepare_activity(self, download, last_update="2026-10-01T00:00:00.0"):
+        """Make the fake adapter return activity details with the given lastUpdateDate."""
+        adapter = FakeAdapter.instances[0]
+
+        def connectapi(path, **kwargs):
+            adapter.connectapi_calls.append((path, kwargs))
+            return {"metadataDTO": {"lastUpdateDate": last_update}}
+
+        adapter.connectapi = connectapi
+        download.temp_dir = self.temp_dir.name
+        return adapter
+
+    def write_file(self, name, content="{}"):
+        with open(os.path.join(self.temp_dir.name, name), "w", encoding="utf-8") as file:
+            file.write(content)
+
+    def test_missing_activity_files_are_downloaded_when_details_are_unchanged(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download)
+        self.write_file("activity_details_42.json", '{"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}')
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, {"activityId": 42, "activityName": "walk"}, False)
+
+        self.assertTrue(os.path.isfile(os.path.join(self.temp_dir.name, "activity_42.json")))
+        self.assertEqual(adapter.download_calls, ["/download-service/files/activity/42"])
+
+    def test_complete_activity_is_not_downloaded_again(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download)
+        self.write_file("activity_details_42.json", '{"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}')
+        self.write_file("activity_42.json")
+        self.write_file("42_ACTIVITY.fit", "fit")
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, {"activityId": 42, "activityName": "walk"}, False)
+
+        self.assertEqual([path for path, _kwargs in adapter.connectapi_calls], ["/activity-service/activity/42"])
+        self.assertEqual(adapter.download_calls, [])
+
+    def test_overwrite_downloads_the_fit_file_again(self):
+        download = self.create_download()
+        adapter = self.prepare_activity(download)
+        self.write_file("activity_details_42.json", '{"metadataDTO": {"lastUpdateDate": "2026-10-01T00:00:00.0"}}')
+        self.write_file("activity_42.json")
+        self.write_file("42_ACTIVITY.fit", "fit")
+
+        with patch("garmindb.download.time.sleep"):
+            download.get_activity(self.temp_dir.name, {"activityId": 42, "activityName": "walk"}, True)
+
+        self.assertEqual(adapter.download_calls, ["/download-service/files/activity/42"])
 
 
 if __name__ == "__main__":
