@@ -114,7 +114,7 @@ class GarminDbMain():
             copy.copy_sleep(monitoring_dir, latest)
 
 
-    def download_data(self, overwrite, latest, stats, simple_output=False):
+    def download_data(self, overwrite, latest, stats, simple_output=False, skip_complete_activities=False):
         """Download selected activity types from Garmin Connect and save the data in files. Overwrite previously downloaded data if indicated."""
         logger.info("___Downloading %s Data___", 'Latest' if latest else 'All')
 
@@ -131,7 +131,7 @@ class GarminDbMain():
             activities_dir = self.gc_config.get_activities_dir()
             root_logger.info("Fetching %d activities to %s", activity_count, activities_dir)
             download.get_activity_types(activities_dir, overwrite)
-            download.get_activities(activities_dir, activity_count, overwrite)
+            download.get_activities(activities_dir, activity_count, overwrite, skip_complete_activities)
 
         if Statistics.monitoring in stats:
             date, days = self.__get_date_and_days(MonitoringDb(self.gc_config.get_db_params()), latest, MonitoringHeartRate, MonitoringHeartRate.heart_rate, 'monitoring')
@@ -364,6 +364,8 @@ def main(argv):
     modifiers_group.add_argument("-l", "--latest", help="Only download and/or import the latest data.", action="store_true", default=False)
     modifiers_group.add_argument("-o", "--overwrite", help="Overwrite existing files when downloading. The default is to only download missing files.",
                                  action="store_true", default=False)
+    modifiers_group.add_argument("--skip-complete-activities", help="When downloading, make no request for activities with all files on disk. Fills gaps cheaply, but doesn't pick up changes made in Garmin Connect.",
+                                 action="store_true", default=False)
     modifiers_group.add_argument("--simple-output", help="Print progress as lines instead of updating progress bars.", action="store_true", default=False)
     args = parser.parse_args()
 
@@ -399,7 +401,7 @@ def main(argv):
 
     if args.download_data:
         try:
-            garminDbMain.download_data(args.overwrite, args.latest, stats, simple_output=args.simple_output)
+            garminDbMain.download_data(args.overwrite, args.latest, stats, simple_output=args.simple_output, skip_complete_activities=args.skip_complete_activities)
         except GarminConnectRateLimitError as e:
             logger.error("Stopped downloading: %s. Files downloaded so far are kept; try again in a few hours.", e)
 

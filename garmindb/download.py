@@ -274,6 +274,18 @@ class Download():
         """Return True if the FIT file of the activity was already downloaded and unzipped (e.g. <id>_ACTIVITY.fit)."""
         return os.path.isfile(f'{directory}/{activity_id_str}.fit') or len(glob.glob(f'{directory}/{activity_id_str}_*.fit')) > 0
 
+    def _has_exercise_sets(self, activity):
+        """Return True if exercise sets are available for this activity from the activity search results."""
+        return (activity.get('activityType') or {}).get('typeKey') in self.exercise_sets_activity_types
+
+    def _activity_files_complete(self, directory, activity):
+        """Return True if all files of an activity from the activity search results are on disk."""
+        activity_id_str = str(activity['activityId'])
+        json_basenames = [f'activity_{activity_id_str}', f'activity_details_{activity_id_str}']
+        if self._has_exercise_sets(activity):
+            json_basenames.append(f'activity_exercise_sets_{activity_id_str}')
+        return all(os.path.isfile(f'{directory}/{basename}.json') for basename in json_basenames) and self._activity_fit_file_exists(directory, activity_id_str)
+
     def __save_activity_exercise_sets(self, directory, activity_id_str, overwrite):
         """Download the exercise sets of a strength training activity if they are missing or overwrite is set."""
         json_filename = f'{directory}/activity_exercise_sets_{activity_id_str}'
@@ -291,7 +303,7 @@ class Download():
         details_changed = self.__save_activity_details(directory, activity_id_str)
         if details_changed:
             root_logger.info("get_activity: %s (%s)", activity_name_str, activity_id_str)
-        if (activity.get('activityType') or {}).get('typeKey') in self.exercise_sets_activity_types:
+        if self._has_exercise_sets(activity):
             # Sets corrected in Garmin Connect only show up in this endpoint, not in the FIT file. Editing an activity
             # updates the lastUpdateDate of its details, so get the sets again whenever the details changed.
             self.__save_activity_exercise_sets(directory, activity_id_str, details_changed or overwrite)
@@ -305,13 +317,21 @@ class Download():
         # pause for a second between every page access
         time.sleep(1)
 
-    def get_activities(self, directory, count, overwrite=False):
-        """Download activities files from Garmin Connect and save the raw files."""
+    def get_activities(self, directory, count, overwrite=False, skip_complete=False):
+        """Download activities files from Garmin Connect and save the raw files.
+
+        With skip_complete, activities with all files on disk cost no request, but changes made to them in Garmin Connect
+        aren't picked up. Ignored with overwrite.
+        """
         self.temp_dir = tempfile.mkdtemp()
         logger.info("Getting activities: '%s' (%d) temp %s", directory, count, self.temp_dir)
-        activities = self.__get_activity_summaries(0, count)
+        activities = self.__get_activity_summaries(0, count) or []
+        if skip_complete and not overwrite:
+            total = len(activities)
+            activities = [activity for activity in activities if not self._activity_files_complete(directory, activity)]
+            root_logger.info("Skipping %d of %d activities with all files present", total - len(activities), total)
         try:
-            for activity in progress(activities or [], 'Downloading activities', unit='activities', simple_output=self.simple_output):
+            for activity in progress(activities, 'Downloading activities', unit='activities', simple_output=self.simple_output):
                 self.get_activity(directory, activity, overwrite)
         finally:
             # Unzip what was downloaded even if the loop stops early (error, rate limit, Ctrl-C);
