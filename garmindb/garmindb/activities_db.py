@@ -555,11 +555,14 @@ class ActivitiesEvaluations(ActivitiesDb.Base, idbutils.DbObject):
     __tablename__ = 'activities_evaluations'
 
     db = ActivitiesDb
-    table_version = 1
+    table_version = 2
 
     activity_id = Column(String, ForeignKey('activities.activity_id'), primary_key=True)
     self_eval_feel = Column(String)
     self_eval_effort = Column(String)
+    # The values as reported by Garmin Connect. Feel is 0, 25, 50, 75 or 100 (very weak to very strong), effort is the RPE times 10.
+    self_eval_feel_value = Column(Integer)
+    self_eval_effort_value = Column(Integer)
 
     @classmethod
     def s_get_activity(cls, session, activity_id):
