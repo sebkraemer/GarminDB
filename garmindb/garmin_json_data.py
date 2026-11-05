@@ -330,11 +330,13 @@ class GarminJsonDetailsData(GarminJsonActivityData):
             ActivitiesCourses.s_insert_or_update(self.garmin_act_db_session, activity_course, ignore_none=True)
         self_eval_feel = self._get_field(summary_dto, 'directWorkoutFeel', int)
         self_eval_effort = self._get_field(summary_dto, 'directWorkoutRpe', int)
-        if self_eval_feel or self_eval_effort:
+        if self_eval_feel is not None or self_eval_effort is not None:
             evuation = {
-                'activity_id'       : activity_id,
-                'self_eval_feel'    : fitfile.fields.ActivityEvalFeel.get_self_eval_feel(self_eval_feel) if (self_eval_feel is not None) else None,
-                'self_eval_effort'  : fitfile.fields.ActivityEvalEffort.get_self_eval_effort(self_eval_effort) if (self_eval_effort is not None) else None
+                'activity_id'               : activity_id,
+                'self_eval_feel'            : fitfile.fields.ActivityEvalFeel.get_self_eval_feel(self_eval_feel) if (self_eval_feel is not None) else None,
+                'self_eval_effort'          : fitfile.fields.ActivityEvalEffort.get_self_eval_effort(self_eval_effort) if (self_eval_effort is not None) else None,
+                'self_eval_feel_value'      : self_eval_feel,
+                'self_eval_effort_value'    : self_eval_effort
             }
             ActivitiesEvaluations.s_insert_or_update(self.garmin_act_db_session, evuation)
         if sport is not None:
