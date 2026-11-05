@@ -81,11 +81,16 @@ class GarminConnectAuthAdapter:
                     f"Garmin Connect token login was rate limited, too many requests (HTTP 429): {e}; not falling back to credential login"
                 ) from e
             except _GARMINCONNECT_ERRORS as e:
+                self.client = None
+                if not self.gc_config.get_allow_password_fallback():
+                    raise GarminConnectAuthError(
+                        f"cached Garmin Connect token login failed for {token_store_file}: {e}; "
+                        "not falling back to credential login (credentials.allow_password_fallback is false), a manual login is required"
+                    ) from e
                 logger.warning(
                     "cached Garmin Connect token login failed for %s: %s; falling back to credential login",
                     token_store_file, e,
                 )
-                self.client = None
 
         username = self.gc_config.get_user()
         password = self.gc_config.get_password()
