@@ -187,11 +187,18 @@ class Download():
         except GarminConnectAuthError as e:
             root_logger.error("Exception getting daily summary: %s", e)
 
-    def get_monitoring(self, directory_func, date, days):
-        """Download the daily monitoring data from Garmin Connect, unzip and save the raw files."""
+    def get_monitoring(self, directory_func, date, days, skip_days=()):
+        """
+        Download the daily monitoring data from Garmin Connect, unzip and save the raw files.
+
+        Days in skip_days cost no request, except the last download_days_overlap days, which may still be partial.
+        """
         root_logger.info("Getting monitoring: %s (%d)", date, days)
+        today = datetime.datetime.now().date()
         for day in progress(range(0, days), 'Downloading monitoring data', unit='days', simple_output=self.simple_output):
             day_date = date + datetime.timedelta(day)
+            if day_date in skip_days and (today - day_date).days > self.download_days_overlap:
+                continue
             self.temp_dir = tempfile.mkdtemp()
             self.__get_monitoring_day(day_date)
             self.__unzip_files(directory_func(day_date.year))
