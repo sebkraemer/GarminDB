@@ -15,7 +15,9 @@
         "user"                          : "",
         "secure_password"               : false,
         "password"                      : "",
-        "password_file"                 : null
+        "password_file"                 : null,
+        "_comment_allow_password_fallback" : "set to false to stop with an error instead of logging in with the password when existing cached tokens fail; the first login without a token file still uses the password",
+        "allow_password_fallback"       : true
     },
     "data": {
         "weight_start_date"             : "12/31/2019",

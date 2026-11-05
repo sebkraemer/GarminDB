@@ -15,11 +15,15 @@ from garmindb.garmin_connect_auth_adapter import GarminConnectAuthAdapter, Garmi
 
 
 class FakeConfig:
-    def __init__(self, config_dir, user="user@example.com", password="secret", domain="garmin.com"):
+    def __init__(self, config_dir, user="user@example.com", password="secret", domain="garmin.com", allow_password_fallback=True):
         self.config_dir = config_dir
         self.user = user
         self.password = password
         self.domain = domain
+        self.allow_password_fallback = allow_password_fallback
+
+    def get_allow_password_fallback(self):
+        return self.allow_password_fallback
 
     def get_token_store_file(self):
         return self.config_dir + os.sep + "garmin_tokens.json"
@@ -105,6 +109,31 @@ class TestGarminConnectAuthAdapter(unittest.TestCase):
             any(token_store_file in r.getMessage() and "falling back to credential login" in r.getMessage() for r in warnings),
             f"expected WARNING mentioning {token_store_file} and fallback, got {[r.getMessage() for r in warnings]}",
         )
+
+    def test_invalid_cached_token_stops_when_password_fallback_is_disabled(self):
+        token_store_file = self.config.get_token_store_file()
+        with open(token_store_file, "w", encoding="utf-8") as file:
+            file.write("{}")
+        config = FakeConfig(self.temp_dir.name, allow_password_fallback=False)
+
+        def garmin_factory(**kwargs):
+            return FakeGarmin(fail_login=True, **kwargs)
+
+        adapter = GarminConnectAuthAdapter(config, garmin_factory=garmin_factory)
+
+        with self.assertRaisesRegex(GarminConnectAuthError, "allow_password_fallback is false"):
+            adapter.login()
+        self.assertEqual(len(FakeGarmin.instances), 1)
+        self.assertNotIn("password", FakeGarmin.instances[0].kwargs)
+        self.assertIsNone(adapter.client)
+
+    def test_first_login_without_token_file_uses_credentials_when_password_fallback_is_disabled(self):
+        config = FakeConfig(self.temp_dir.name, allow_password_fallback=False)
+
+        adapter = GarminConnectAuthAdapter(config, garmin_factory=FakeGarmin)
+
+        self.assertTrue(adapter.login())
+        self.assertEqual(FakeGarmin.instances[0].kwargs["password"], "secret")
 
     def test_rate_limited_cached_token_does_not_fall_back_to_credentials(self):
         token_store_file = self.config.get_token_store_file()

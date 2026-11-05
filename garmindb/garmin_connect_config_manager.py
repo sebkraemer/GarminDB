@@ -213,6 +213,10 @@ class GarminConnectConfigManager(JsonConfig):
             return self.get_password_from_file()
         return self.get_node_value('credentials', 'password')
 
+    def get_allow_password_fallback(self):
+        """Return True if a failed login with existing cached tokens may fall back to a login with the configured credentials."""
+        return self.get_node_value_default('credentials', 'allow_password_fallback', True)
+
     def get_garmin_base_domain(self):
         """Return the Garmin base domain to use for api calls."""
         return self.get_node_value_default('garmin', 'domain', "garmin.com")
