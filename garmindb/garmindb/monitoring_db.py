@@ -233,6 +233,20 @@ class Monitoring(MonitoringDb.Base, idbutils.DbObject):
         return session.query(cls).filter(cls.timestamp == values_dict['timestamp']).filter(cls.activity_type == values_dict['activity_type']).one_or_none()
 
     @classmethod
+    def get_complete_days(cls, db, start_date, days):
+        """
+        Return the set of dates in the given range that the table holds up to the end of the day.
+
+        Monitoring FIT files are split at midnight and the last file of a day ends with entries at midnight, which are stored
+        as 23:59:59 of that day. Watches upload their files in order, so such an entry means that the whole day was uploaded.
+        Having entries for a day proves nothing: the day may have been downloaded before the watch finished uploading it.
+        Days without such an entry are not reported as complete, e.g. some days with a clock change. They are just downloaded again.
+        """
+        day_ends = [datetime.datetime.combine(start_date + datetime.timedelta(day), datetime.time(23, 59, 59)) for day in range(days)]
+        with db.managed_session() as session:
+            return {row[0].date() for row in session.query(cls.timestamp).filter(cls.timestamp.in_(day_ends)).distinct().all()}
+
+    @classmethod
     def get_active_calories(cls, session, activity_type, start_ts, end_ts):
         """Return the total calories burned during activity during the indicated period."""
         active_calories = cls.s_get_col_avg_of_max_per_day_for_value(session, cls.active_calories, cls.activity_type, activity_type, start_ts, end_ts)
