@@ -102,9 +102,11 @@ class TestExerciseSetsRefresh(unittest.TestCase):
 
     def test_refresh_updates_changed_sets(self):
         self._write_sets(self.sets)
-        self.download.get_activity(self.directory, self.strength, False, refresh_exercise_sets=True)
+        with self.assertLogs(level='INFO') as logs:
+            self.download.get_activity(self.directory, self.strength, False, refresh_exercise_sets=True)
         self.assertEqual(len(self._sets_requests()), 1)
         self.assertEqual(self._read_sets(), self.corrected_sets)
+        self.assertTrue(any('Updating changed' in line and self.sets_file in line for line in logs.output))
 
     def test_refresh_keeps_unchanged_file(self):
         self._write_sets(self.corrected_sets)
