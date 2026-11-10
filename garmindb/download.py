@@ -309,12 +309,12 @@ class Download():
         except GarminConnectAuthError as e:
             root_logger.error("Exception getting activity exercise sets %s", e)
             return
-        if not exists:
-            self._save_json_to_file(full_filename, json_data, 'Saving')
-        elif overwrite or self._load_json_from_file(full_filename) != json_data:
-            self._save_json_to_file(full_filename, json_data, 'Updating')
-        else:
-            root_logger.info("Skipping unchanged %s", full_filename)
+        if exists and not overwrite:
+            if self._load_json_from_file(full_filename) == json_data:
+                root_logger.info("Skipping unchanged %s", full_filename)
+                return
+            root_logger.info("Updating changed %s", full_filename)
+        self._save_json_to_file(full_filename, json_data, 'Updating' if exists else 'Saving')
 
     def get_activity(self, directory, activity, overwrite, refresh_exercise_sets=False):
         activity_id_str = str(activity['activityId'])
