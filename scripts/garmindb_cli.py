@@ -130,7 +130,7 @@ class GarminDbMain():
             activities_dir = self.gc_config.get_activities_dir()
             root_logger.info("Fetching %d activities to %s", activity_count, activities_dir)
             download.get_activity_types(activities_dir, overwrite)
-            download.get_activities(activities_dir, activity_count, overwrite)
+            download.get_activities(activities_dir, activity_count, overwrite, refresh_exercise_sets=latest)
 
         if Statistics.monitoring in stats:
             date, days = self.__get_date_and_days(MonitoringDb(self.gc_config.get_db_params()), latest, MonitoringHeartRate, MonitoringHeartRate.heart_rate, 'monitoring')
