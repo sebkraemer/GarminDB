@@ -131,7 +131,7 @@ class GarminDbMain():
             activities_dir = self.gc_config.get_activities_dir()
             root_logger.info("Fetching %d activities to %s", activity_count, activities_dir)
             download.get_activity_types(activities_dir, overwrite)
-            download.get_activities(activities_dir, activity_count, overwrite, skip_complete_activities)
+            download.get_activities(activities_dir, activity_count, overwrite, skip_complete_activities, refresh_exercise_sets=latest)
 
         if Statistics.monitoring in stats:
             monitoring_db = MonitoringDb(self.gc_config.get_db_params())
